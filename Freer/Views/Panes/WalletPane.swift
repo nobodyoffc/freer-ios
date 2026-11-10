@@ -127,32 +127,32 @@ enum WalletPane: String, Hashable, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .overview:     return "Overview"
-        case .send:         return "Send"
-        case .cash:         return "Cash"
-        case .transactions: return "Transactions"
-        case .contacts:     return "Contacts"
-        case .chat:         return "Chat"
-        case .mail:         return "Cmail"
-        case .news:         return "News"
-        case .helpBeginners: return "Help beginners"
-        case .proofs:       return "Proofs"
-        case .tokens:       return "Tokens"
-        case .files:        return "Files"
-        case .secrets:      return "Secrets"
-        case .publishText:  return "Text"
-        case .publishStatement: return "Statement"
-        case .publishImage: return "Image"
-        case .publishSound: return "Sound"
-        case .publishVideo: return "Video"
-        case .protocols:    return "Protocols"
-        case .services:     return "Services"
-        case .codes:        return "Code"
-        case .apps:         return "Apps"
-        case .crypto:       return "Crypto"
-        case .convert:      return "Converter"
-        case .logs:         return "Logs"
-        case .settings:     return "Settings"
+        case .overview:     return String(localized: "Overview")
+        case .send:         return String(localized: "Send")
+        case .cash:         return String(localized: "Cash")
+        case .transactions: return String(localized: "Transactions")
+        case .contacts:     return String(localized: "Contacts")
+        case .chat:         return String(localized: "Chat")
+        case .mail:         return String(localized: "Cmail")
+        case .news:         return String(localized: "News")
+        case .helpBeginners: return String(localized: "Help beginners")
+        case .proofs:       return String(localized: "Proofs")
+        case .tokens:       return String(localized: "Tokens")
+        case .files:        return String(localized: "Files")
+        case .secrets:      return String(localized: "Secrets")
+        case .publishText:  return String(localized: "Text")
+        case .publishStatement: return String(localized: "Statement")
+        case .publishImage: return String(localized: "Image")
+        case .publishSound: return String(localized: "Sound")
+        case .publishVideo: return String(localized: "Video")
+        case .protocols:    return String(localized: "Protocols")
+        case .services:     return String(localized: "Services")
+        case .codes:        return String(localized: "Code")
+        case .apps:         return String(localized: "Apps")
+        case .crypto:       return String(localized: "Crypto")
+        case .convert:      return String(localized: "Converter")
+        case .logs:         return String(localized: "Logs")
+        case .settings:     return String(localized: "Settings")
         }
     }
 
@@ -224,9 +224,9 @@ enum WalletPane: String, Hashable, CaseIterable, Identifiable {
     var closedReason: String? {
         switch self {
         case .chat, .mail:
-            return "Watch-only identity — no key to open a DOCK with, or to decrypt what it holds. Switch to your main FID."
+            return String(localized: "Watch-only identity — no key to open a DOCK with, or to decrypt what it holds. Switch to your main FID.")
         case .secrets:
-            return "Watch-only identity — no key to decrypt these with. Switch to your main FID."
+            return String(localized: "Watch-only identity — no key to decrypt these with. Switch to your main FID.")
         default:
             return nil
         }

@@ -185,7 +185,7 @@ struct PublishDocumentView: View {
         let format = self.format
         let loaded: (PublishDocument.Kind, String?, AttributedString?, String?) = await Task.detached(priority: .userInitiated) {
             guard let data = try? Data(contentsOf: url) else {
-                return (.other, nil, nil, "The fetched file could not be read back from this device.")
+                return (.other, nil, nil, String(localized: "The fetched file could not be read back from this device."))
             }
             let kind = PublishDocument.kind(of: data, format: format)
             switch kind {
@@ -205,7 +205,7 @@ struct PublishDocumentView: View {
                 // Word and OpenDocument files go to Quick Look, which
                 // does draw them, by the Open button below.
                 guard type == .rtf else {
-                    return (kind, nil, nil, "Tap Open to read this document.")
+                    return (kind, nil, nil, String(localized: "Tap Open to read this document."))
                 }
                 do {
                     let ns = try NSAttributedString(
@@ -215,7 +215,7 @@ struct PublishDocumentView: View {
                     )
                     return (kind, ns.string, AttributedString(ns), nil)
                 } catch {
-                    return (.other, nil, nil, "The document could not be read: \(error.localizedDescription)")
+                    return (.other, nil, nil, String(localized: "The document could not be read: \(error.localizedDescription)"))
                 }
             case .pdf, .other:
                 return (kind, nil, nil, nil)
@@ -244,7 +244,7 @@ struct PublishDocumentView: View {
         do {
             FilePanel.preview(try namedCopy())
         } catch {
-            note = "Couldn't hand the file to another app: \(error.localizedDescription)"
+            note = String(localized: "Couldn't hand the file to another app: \(error.localizedDescription)")
         }
     }
 
@@ -257,7 +257,7 @@ struct PublishDocumentView: View {
                     try FileManager.default.copyItem(at: url, to: dest)
                 }
             } catch {
-                note = "Couldn't save the copy: \(error.localizedDescription)"
+                note = String(localized: "Couldn't save the copy: \(error.localizedDescription)")
             }
         }
     }

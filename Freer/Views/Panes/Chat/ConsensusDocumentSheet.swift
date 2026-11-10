@@ -228,7 +228,7 @@ struct ConsensusDocumentSheet: View {
                     self.file = nil
                     text = TeamConsensus.template
                     loadedText = ""
-                    note = "Starting from the template. Saving this makes a new document with a new id, and the team keeps the file it names now until a carve says otherwise."
+                    note = String(localized: "Starting from the template. Saving this makes a new document with a new id, and the team keeps the file it names now until a carve says otherwise.")
                 }
             }
         }
@@ -259,9 +259,9 @@ struct ConsensusDocumentSheet: View {
                 }
                 guard let saved else { return }
                 error = nil
-                note = "Saved \(saved)."
+                note = String(localized: "Saved \(saved).")
             } catch {
-                self.error = "Couldn't save a copy: \(String(describing: error))"
+                self.error = String(localized: "Couldn't save a copy: \(String(describing: error))")
             }
         }
     }
@@ -280,14 +280,14 @@ struct ConsensusDocumentSheet: View {
                     // one place the team's own words are supposed to
                     // be. Say the team names no document instead.
                     text = ""
-                    note = "This team names no consensus document — there is nothing carved to read. Only the owner can put one there, by carving it in the team's settings."
+                    note = String(localized: "This team names no consensus document — there is nothing carved to read. Only the owner can put one there, by carving it in the team's settings.")
                     return
                 }
                 // A team being created has no document yet, so it is offered
                 // the questions rather than a blank box. See
                 // ``TeamConsensus/template``.
                 text = TeamConsensus.template
-                note = "This is a starting point, not a consensus. Answer what applies, delete what does not, and rewrite anything that reads like a form."
+                note = String(localized: "This is a starting point, not a consensus. Answer what applies, delete what does not, and rewrite anything that reads like a form.")
             }
             return
         }
@@ -321,7 +321,7 @@ struct ConsensusDocumentSheet: View {
                     // template is what the team currently runs on.
                     text = TeamConsensus.template
                     loadedText = ""
-                    note = "Starting from the template instead. Saving this makes a new document with a new id — it does not recover the one above."
+                    note = String(localized: "Starting from the template instead. Saving this makes a new document with a new id — it does not recover the one above.")
                 }
             }
         }
@@ -337,7 +337,7 @@ struct ConsensusDocumentSheet: View {
         if let failure = error as? TeamConsensus.Failure {
             switch failure {
             case .notHere:
-                return "This document is not on this device, and there is no DISK to read it from — the team publishes none, so nobody can fetch it. Setting the team's DISK is what fixes that."
+                return String(localized: "This document is not on this device, and there is no DISK to read it from — the team publishes none, so nobody can fetch it. Setting the team's DISK is what fixes that.")
             default:
                 return String(describing: failure)
             }

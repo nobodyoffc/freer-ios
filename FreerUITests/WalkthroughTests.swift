@@ -16,7 +16,6 @@ final class WalkthroughTests: XCTestCase {
     override func setUp() {
         continueAfterFailure = true
         app = XCUIApplication()
-        app.launch()
     }
 
     private func snap(_ name: String) {
@@ -66,6 +65,9 @@ final class WalkthroughTests: XCTestCase {
     }
 
     func testWalkthrough() {
+        // By name, in English, whatever language the simulator is set to.
+        app.launchArguments += ["-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
+        app.launch()
         snap("launch")
         reachHome()
         snap("home")
@@ -109,5 +111,46 @@ final class WalkthroughTests: XCTestCase {
         app.buttons["Identity — switch the live FID"].tap()
         sleep(1)
         snap("person-menu")
+    }
+
+    /// The same app in Simplified Chinese: the unlock screen, the home
+    /// grid and a few panes, to see that the translation is found and fits.
+    ///
+    /// Run after ``testWalkthrough()`` has made the vault. Controls are
+    /// found by position or by their Chinese names, since the English
+    /// ones are exactly what is absent here.
+    func testChineseScreens() {
+        app.launchArguments += ["-AppleLanguages", "(zh-Hans)", "-AppleLocale", "zh_CN"]
+        app.launch()
+        let password = app.secureTextFields.firstMatch
+        XCTAssertTrue(password.waitForExistence(timeout: 20), "the password screen")
+        snap("zh-password")
+        password.tap()
+        password.typeText("walkthrough-vault-1")
+        app.buttons["创建新密码"].tap()
+        XCTAssertTrue(app.staticTexts["选择身份"].waitForExistence(timeout: 30), "the identity chooser")
+        snap("zh-choose-identity")
+        app.cells.firstMatch.tap()
+        XCTAssertTrue(app.buttons["锁定密钥库"].waitForExistence(timeout: 40), "the home screen")
+        sleep(3)
+        snap("zh-home")
+        app.swipeUp()
+        snap("zh-home-grid")
+        for title in ["对话", "钞票", "支付", "密信", "协议", "概览"] {
+            let tile = app.buttons[title].firstMatch
+            guard tile.waitForExistence(timeout: 3) else {
+                XCTFail("tile \(title) is not on screen")
+                continue
+            }
+            if !tile.isHittable { app.swipeDown() }
+            tile.tap()
+            sleep(2)
+            snap("zh-" + title)
+            app.navigationBars.buttons.firstMatch.tap()
+            sleep(1)
+        }
+        app.buttons["设置"].firstMatch.tap()
+        sleep(1)
+        snap("zh-设置")
     }
 }

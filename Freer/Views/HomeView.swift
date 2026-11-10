@@ -121,7 +121,7 @@ struct HomeView: View {
             QrToolSheet { showQrTool = false }
         }
         .sheet(isPresented: $showReceive) {
-            QrDisplaySheet(title: "Receive", content: session.liveFid) { showReceive = false }
+            QrDisplaySheet(title: String(localized: "Receive"), content: session.liveFid) { showReceive = false }
         }
         .sheet(isPresented: $showPersonMenu, onDismiss: {
             let next = afterPersonMenu
@@ -142,7 +142,7 @@ struct HomeView: View {
                 showSetMaster = false
                 appState.bumpIdentityRevision()
                 Task { await appState.refreshLiveFidInfo() }
-                identityNote = "Master carve broadcast — \(txid.elidingMiddle(head: 8, tail: 8)). It takes effect when the block confirms."
+                identityNote = String(localized: "Master carve broadcast — \(txid.elidingMiddle(head: 8, tail: 8)). It takes effect when the block confirms.")
             } onCancel: {
                 showSetMaster = false
             }
@@ -151,7 +151,7 @@ struct HomeView: View {
             CreateMultisigSheet(session: session) { info in
                 showCreateMultisig = false
                 appState.bumpIdentityRevision()
-                identityNote = "Created \(info.fid.elidingMiddle(head: 8, tail: 8)). Give every member its redeem script — without it the group's coins cannot be moved."
+                identityNote = String(localized: "Created \(info.fid.elidingMiddle(head: 8, tail: 8)). Give every member its redeem script — without it the group's coins cannot be moved.")
             } onCancel: {
                 showCreateMultisig = false
             }
@@ -161,8 +161,8 @@ struct HomeView: View {
                 showAddMultisig = false
                 appState.bumpIdentityRevision()
                 identityNote = count == 1
-                    ? "Added 1 multisig group."
-                    : "Added \(count) multisig groups."
+                    ? String(localized: "Added 1 multisig group.")
+                    : String(localized: "Added \(count) multisig groups.")
             } onCancel: {
                 showAddMultisig = false
             }
@@ -170,7 +170,7 @@ struct HomeView: View {
         .sheet(item: $signingGroup) { target in
             SignMultisigTxSheet(session: session, groupFid: target.fid) { txid in
                 signingGroup = nil
-                identityNote = "Broadcast \(txid.elidingMiddle(head: 8, tail: 8))."
+                identityNote = String(localized: "Broadcast \(txid.elidingMiddle(head: 8, tail: 8)).")
             } onCancel: {
                 signingGroup = nil
             }
@@ -180,8 +180,8 @@ struct HomeView: View {
                 showAddServants = false
                 appState.bumpIdentityRevision()
                 identityNote = count == 1
-                    ? "Added 1 servant."
-                    : "Added \(count) servants."
+                    ? String(localized: "Added 1 servant.")
+                    : String(localized: "Added \(count) servants.")
             } onCancel: {
                 showAddServants = false
             }
@@ -207,7 +207,7 @@ struct HomeView: View {
             BackupPrikeySheet(session: session) {
                 showBackupPrikey = false
                 appState.markPrikeyBackedUp()
-                identityNote = "Backup recorded. The reminder stops — the copy itself is yours to keep safe."
+                identityNote = String(localized: "Backup recorded. The reminder stops — the copy itself is yours to keep safe.")
             } onLater: {
                 showBackupPrikey = false
             } onSetMaster: {
@@ -236,10 +236,10 @@ struct HomeView: View {
                 .font(.system(size: 32, weight: .bold))
                 .foregroundStyle(Color.accentColor)
             Spacer()
-            headerButton("qrcode.viewfinder", label: "QR — scan or make QR codes") {
+            headerButton("qrcode.viewfinder", label: String(localized: "QR — scan or make QR codes")) {
                 showQrTool = true
             }
-            headerButton("gearshape", label: "Settings") {
+            headerButton("gearshape", label: String(localized: "Settings")) {
                 appState.selectedPane = .settings
             }
             Button {
@@ -248,8 +248,8 @@ struct HomeView: View {
                 FidAvatarView(fid: session.liveFid, size: 28)
                     .frame(width: 44, height: 44)
             }
-            .accessibilityLabel("Identity — switch the live FID")
-            headerButton("lock.fill", label: "Lock vault") {
+            .accessibilityLabel(Text("Identity — switch the live FID"))
+            headerButton("lock.fill", label: String(localized: "Lock vault")) {
                 appState.lockAll()
             }
         }
@@ -465,7 +465,8 @@ struct HomeTile: Identifiable {
     let systemImage: String
     let target: Target
 
-    var id: String { title }
+    /// The image is what tells tiles apart: titles change with the language.
+    var id: String { systemImage + "|" + title }
 
     /// Why this tile cannot be opened by the live identity, if it cannot.
     func closedReason(canSign: Bool) -> String? {
@@ -482,19 +483,19 @@ struct HomeTile: Identifiable {
     }
 
     static let all: [HomeTile] = [
-        pane(.news), pane(.convert, "Convert"), pane(.crypto, "Tools"),
-        pane(.protocols, "Protocol"), pane(.services, "Service"), pane(.codes),
-        pane(.proofs, "Proof"), pane(.tokens, "Token"), pane(.apps, "APP"),
-        pane(.overview), pane(.secrets, "Secret"), pane(.files),
-        pane(.logs), pane(.transactions, "TX"), pane(.cash),
-        pane(.helpBeginners, "First FCH"),
-        HomeTile(title: "Receive", systemImage: "qrcode", target: .receive),
-        HomeTile(title: "Pay", systemImage: "paperplane", target: .pay),
-        HomeTile(title: "Square", systemImage: "megaphone", target: .chat(.square)),
-        HomeTile(title: "Team", systemImage: "person.3", target: .chat(.team)),
-        HomeTile(title: "Room", systemImage: "rectangle.3.group.bubble", target: .chat(.room)),
-        pane(.contacts, "Contact"), pane(.mail),
-        HomeTile(title: "Talk", systemImage: "bubble.left.and.bubble.right", target: .chat(.p2p)),
+        pane(.news), pane(.convert, String(localized: "Convert")), pane(.crypto, String(localized: "Tools")),
+        pane(.protocols, String(localized: "Protocol")), pane(.services, String(localized: "Service")), pane(.codes),
+        pane(.proofs, String(localized: "Proof")), pane(.tokens, String(localized: "Token")), pane(.apps, String(localized: "APP")),
+        pane(.overview), pane(.secrets, String(localized: "Secret")), pane(.files),
+        pane(.logs), pane(.transactions, String(localized: "TX")), pane(.cash),
+        pane(.helpBeginners, String(localized: "First FCH")),
+        HomeTile(title: String(localized: "Receive"), systemImage: "qrcode", target: .receive),
+        HomeTile(title: String(localized: "Pay"), systemImage: "paperplane", target: .pay),
+        HomeTile(title: String(localized: "Square"), systemImage: "megaphone", target: .chat(.square)),
+        HomeTile(title: String(localized: "Team"), systemImage: "person.3", target: .chat(.team)),
+        HomeTile(title: String(localized: "Room"), systemImage: "rectangle.3.group.bubble", target: .chat(.room)),
+        pane(.contacts, String(localized: "Contact")), pane(.mail),
+        HomeTile(title: String(localized: "Talk"), systemImage: "bubble.left.and.bubble.right", target: .chat(.p2p)),
         pane(.publishImage), pane(.publishText), pane(.publishStatement),
         pane(.publishSound), pane(.publishVideo),
     ]
