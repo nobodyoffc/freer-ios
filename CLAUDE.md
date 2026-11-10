@@ -1,0 +1,49 @@
+# Freer for iOS
+
+The iPhone/iPad client of Freer. Android (`~/AndroidStudioProjects/Freer`) and
+Mac (`~/MacApp/FreerForMac`) are the two existing clients; this one is built
+from the Mac's Swift code and laid out like the Android app.
+
+## Where the code lives
+
+- **Logic is not in this folder.** `FCCore`, `FCTransport`, `FCStorage`,
+  `FCDomain`, `FCUI` and `FCVoice` are the Mac repo's packages, referenced by
+  path (`../MacApp/FreerForMac/Packages/*`). A fix to the wallet, a protocol or
+  the transport is made there and reaches both apps. The Mac repo must sit
+  beside this one for the project to build.
+- **`Freer/`** is the app: a copy of the Mac's `Sources/FreerForMac`
+  (`Config/mac-source-revision.txt` records the commit it was taken from),
+  adapted for iOS. It is a fork, not a reference: a change to a Mac view has to
+  be brought over by hand.
+- **`Freer/Platform/`** is what exists only here: the wrapping toolbar row,
+  sheet sizing, the open-panel stand-in, touch tracking for auto-lock, the ringer.
+- **`Freer/Views/HomeView.swift`** is the Android-style home grid. Tiles are
+  listed in `HomeTile.all`, in Android's order.
+- Not ported, on purpose: the SSH terminal and Release Sync (both run
+  subprocesses, which iOS does not allow) and the menu-bar item.
+
+## How Mac views are made to work on iOS
+
+- AppKit names the views use (`NSImage`, `NSColor.controlBackgroundColor`,
+  `NSPasteboard`) are given UIKit meanings in
+  `FCUI/Platform/AppKitCompat.swift`, compiled for iOS only. A file that uses
+  them must `import FCUI`.
+- `NSOpenPanel` → the stand-in in `Platform/OpenPanel.swift`; `runModal()` is
+  `async` there, so the call sits in a `Task` with `await`.
+- `NSSavePanel` → `FilePanel.export(named:write:)`: write first, then the user
+  picks where the copy goes.
+- A window-sized `.frame(width: 560)` → `.sheetFrame(...)` with the same
+  arguments. A pane toolbar's `HStack` → `FlowRow`, which wraps.
+- `.buttonStyle(.link)` → `.borderless`; `.toggleStyle(.checkbox)` → `.checkmark`.
+
+## Build and check
+
+    tools/build.sh                 # simulator build; prints errors and the verdict
+    tools/walkthrough.sh <simulator-udid> <shots-dir>
+
+The walkthrough is a UI test that makes a vault and an identity, opens every
+home tile and saves a screenshot of each — the way to see a layout change on
+a phone. Run it after touching a pane. `xcrun simctl list devices` gives a UDID.
+
+No signing team is set: simulator builds work as is, a device build needs
+`DEVELOPMENT_TEAM` in the target's settings. Bundle id `cash.freer.ios`.

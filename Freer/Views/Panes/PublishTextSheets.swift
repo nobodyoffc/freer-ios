@@ -1,0 +1,640 @@
+import SwiftUI
+import UIKit
+import FCCore
+import FCDomain
+import FCUI
+
+// MARK: - compose
+
+/// Publish a text work from a file — or save it as a draft, or publish
+/// a new edition of one already on chain.
+///
+/// **The work is a file the writer already has**: plain text, Markdown,
+/// RTF, Word, OpenDocument or PDF (see ``PublishDocument``). It is not
+/// typed into this sheet, because a work worth carving is written in a
+/// real editor, and a PDF or a Word file cannot be typed at all.
+///
+/// **Two things are paid for and they are paid for in that order.** The
+/// body goes to DISK first and the metadata is carved second, because a
+/// carve naming bytes nobody can fetch is a permanent dead link that
+/// cost a fee. If the upload fails, nothing has been carved and nothing
+/// is lost; if the carve fails, the bytes are on DISK and the same
+/// Publish will reuse them, because the DID of unchanged text is the
+/// same DID.
+///
+/// **The byte budget is on the metadata, not the work.** Only the
+/// title, summary, authors and the 64-character `did` ride in the
+/// OP_RETURN, so a novel and a note cost the same to publish. What can
+/// still overflow is the summary and a long author list, which is what
+/// the live counter watches.
+struct PublishTextComposer: View {
+    let session: ActiveSession
+
+    /// The record being revised — a draft, or a carved record getting a
+    /// new edition. Nil composes a new one.
+    let editing: TextRecord?
+
+    enum Result {
+        case carved(TextRecord)
+        case updated(String)
+        case draft
+        case cancelled
+    }
+
+    let onDone: (Result) -> Void
+
+    /// - parameters:
+    ///   - draft, file: opened from the Files pane — the fields come from
+    ///     the file's HAT (``Hat/toWorkDraft()``) and `file` is its local
+    ///     copy, uploaded on Publish like a picked file.
+    init(
+        session: ActiveSession,
+        editing: TextRecord? = nil,
+        draft: Hat.WorkDraft? = nil,
+        file: URL? = nil,
+        onDone: @escaping (Result) -> Void
+    ) {
+        self.session = session
+        self.editing = editing
+        self.onDone = onDone
+        self.fromFiles = draft != nil
+        _title = State(initialValue: editing?.title ?? draft?.title ?? "")
+        _summary = State(initialValue: editing?.summary ?? draft?.summary ?? "")
+        _type = State(initialValue: editing?.type ?? "")
+        _lang = State(initialValue: editing?.lang ?? "")
+        _format = State(initialValue: editing?.format ?? draft?.format ?? "")
+        _authorsText = State(initialValue: (editing?.authors ?? []).joined(separator: ", "))
+        _cover = State(initialValue: editing?.cover.map { CoverChoice.image(id: $0) } ?? .none)
+        _pickedURL = State(initialValue: file)
+        _pickedSize = State(initialValue: file.flatMap {
+            (try? FileManager.default.attributesOfItem(atPath: $0.path)[.size] as? NSNumber)??.int64Value
+        })
+    }
+
+    /// Opened from the Files pane on a file the user holds.
+    private let fromFiles: Bool
+
+    @State private var title: String
+    @State private var summary: String
+    @State private var type: String
+    @State private var lang: String
+    @State private var format: String
+    @State private var authorsText: String
+    /// The file picked in this sheet. Nil while editing means "keep the
+    /// current body" — the record's `did` stands.
+    @State private var cover: CoverChoice
+    @State private var pickedURL: URL?
+    @State private var pickedSize: Int64?
+    @State private var busy = false
+    @State private var progressNote: String?
+    @State private var error: String?
+
+    /// True once this record exists on chain — the editor is then
+    /// producing an *edition*, not a first publish.
+    private var isNewEdition: Bool { (editing?.onChain ?? false) != false && editing != nil }
+
+    private var authors: [String] {
+        authorsText
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+    }
+
+    private var remaining: Int {
+        TextFeip.remainingSummaryBytes(
+            textId: isNewEdition ? editing?.id : nil,
+            title: title,
+            type: type.isEmpty ? nil : type,
+            // The did is always 64 hex characters, so its cost is known
+            // before the body exists. Measuring with a placeholder keeps
+            // the budget honest for a draft that has not uploaded yet.
+            did: String(repeating: "0", count: 64),
+            lang: lang.isEmpty ? nil : lang,
+            authors: authors.isEmpty ? nil : authors,
+            format: format.isEmpty ? nil : format,
+            summary: summary
+        ) - (cover != .none ? CoverChoice.carveBytes : 0)
+    }
+
+    private var hasBytes: Bool { pickedURL != nil || (editing?.did?.isEmpty == false) }
+
+    private var canPublish: Bool {
+        !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && hasBytes
+            && remaining >= 0
+            && !busy
+            && session.canSign
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(isNewEdition ? "Publish a new edition" : "Publish a text")
+                .font(.title3.bold())
+
+            if fromFiles {
+                Label(
+                    "Publishing makes this file public. It is uploaded to DISK unencrypted, so anyone can fetch it by its hash, and the chain records it for good. Your encrypted backup is not affected.",
+                    systemImage: "globe"
+                )
+                .font(.caption)
+                .foregroundStyle(.orange)
+            }
+
+            if isNewEdition {
+                Label(
+                    "Every field below is re-carved, including the ones you don't touch — an update that leaves a field out clears it. The edition counter goes to v\((editing?.edition ?? 1) + 1).",
+                    systemImage: "info.circle"
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    filePicker
+
+                    LabeledField("Title") {
+                        TextField("What the work is called", text: $title)
+                            .fieldInputStyle()
+                    }
+
+                    LabeledField("Summary") {
+                        VStack(alignment: .leading, spacing: 4) {
+                            TextField("A line or two, carved on chain so a list can show it", text: $summary, axis: .vertical)
+                                .lineLimit(2...5)
+                                .fieldInputStyle()
+                            Text(remaining >= 0
+                                 ? "\(remaining) bytes left in the carve"
+                                 : "\(-remaining) bytes over the OP_RETURN limit")
+                                .font(.caption2.monospacedDigit())
+                                .foregroundStyle(remaining >= 0 ? AnyShapeStyle(.tertiary) : AnyShapeStyle(Color.red))
+                        }
+                    }
+
+                    HStack(spacing: 12) {
+                        LabeledField("Type") {
+                            TextField("essay, note, article…", text: $type)
+                                .fieldInputStyle()
+                        }
+                        LabeledField("Language") {
+                            TextField("en, zh…", text: $lang)
+                                .fieldInputStyle()
+                        }
+                        LabeledField("Format") {
+                            TextField("text/markdown, application/pdf…", text: $format)
+                                .fieldInputStyle()
+                        }
+                    }
+
+                    CoverField(session: session, choice: $cover)
+
+                    LabeledField("Authors") {
+                        VStack(alignment: .leading, spacing: 4) {
+                            TextField("FIDs or names, comma separated", text: $authorsText)
+                                .fieldInputStyle()
+                            if !authors.isEmpty {
+                                // Echo the parse back, so what will be
+                                // carved is never a guess the writer
+                                // cannot see.
+                                HStack(spacing: 4) {
+                                    ForEach(authors, id: \.self) { author in
+                                        Text(author.count > 24 ? author.elidingMiddle(head: 6, tail: 6) : author)
+                                            .font(.caption2)
+                                            .padding(.horizontal, 6).padding(.vertical, 2)
+                                            .background(Capsule().fill(Color.secondary.opacity(0.15)))
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                .padding(.trailing, 4)
+            }
+            .frame(maxHeight: 420)
+
+            if let n = progressNote {
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    Text(n).font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            if let e = error {
+                CopyableText(e, font: .caption).foregroundStyle(.red)
+            }
+            if !session.canSign {
+                CopyableLabel("This identity is watch-only — there is no key here to sign a carve with.", systemImage: "eye")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            }
+
+            HStack {
+                Button("Cancel") { onDone(.cancelled) }
+                    .keyboardShortcut(.cancelAction)
+                Spacer()
+                if !isNewEdition {
+                    Button("Save draft") { saveDraft() }
+                        .disabled(busy || title.trimmingCharacters(in: .whitespaces).isEmpty)
+                        .help("Keeps the work on this device. Nothing is uploaded and nothing is carved.")
+                }
+                Button(isNewEdition ? "Publish edition" : "Publish") {
+                    Task { await publish() }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(!canPublish)
+            }
+        }
+        .padding(20)
+        .sheetFrame(width: 640)
+    }
+
+    // MARK: - the file
+
+    @ViewBuilder
+    private var filePicker: some View {
+        LabeledField("The work") {
+            HStack(alignment: .top, spacing: 12) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 8).fill(Color.secondary.opacity(0.12))
+                    Image(systemName: pickedURL == nil && editing?.did == nil ? "doc" : "doc.text")
+                        .font(.title)
+                        .foregroundStyle(pickedURL == nil && editing?.did == nil ? .tertiary : .secondary)
+                }
+                .frame(width: 72, height: 90)
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Button(hasBytes ? "Choose a different file…" : "Choose a file…") { pick() }
+                    if let url = pickedURL {
+                        Text(url.lastPathComponent).font(.caption).lineLimit(1).truncationMode(.middle)
+                        if let size = pickedSize {
+                            Text(ByteCountFormatter.string(fromByteCount: size, countStyle: .file))
+                                .font(.caption2).foregroundStyle(.tertiary)
+                        }
+                        Text("Uploaded to DISK on publish; the chain gets its hash. The file stays where it is — it is referenced, not copied.")
+                            .font(.caption2).foregroundStyle(.tertiary)
+                    } else if let did = editing?.did {
+                        Text("Currently: \(did.elidingMiddle(head: 8, tail: 8))")
+                            .font(.system(.caption2, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                        Text("Leave it alone to keep this file and change only the details.")
+                            .font(.caption2).foregroundStyle(.tertiary)
+                    } else {
+                        Text("Plain text, Markdown, RTF, Word, OpenDocument or PDF.")
+                            .font(.caption2).foregroundStyle(.tertiary)
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+        }
+    }
+
+    private func pick() {
+        Task { @MainActor in
+            let panel = NSOpenPanel()
+            panel.allowsMultipleSelection = false
+            panel.canChooseDirectories = false
+            panel.allowedContentTypes = PublishDocument.contentTypes
+            panel.prompt = "Choose"
+            guard await panel.runModal() == .OK, let url = panel.url else { return }
+            pickedURL = url
+            pickedSize = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)??.int64Value
+            if title.isEmpty {
+                title = url.deletingPathExtension().lastPathComponent
+            }
+            // Exact here, a guess later: the reader uses it to tell
+            // Markdown from plain text.
+            if let mime = PublishDocument.mimeType(for: url) {
+                format = mime
+            }
+        }
+    }
+
+    // MARK: - actions
+
+    private func saveDraft() {
+        do {
+            // The file is registered where it lies but not uploaded: a
+            // draft costs nothing until somebody chooses to pay.
+            var did = editing?.did
+            if let url = pickedURL {
+                did = try session.publishBody.storeFileLocally(at: url)
+            }
+            var draft = TextRecord.createLocal(
+                title: title,
+                type: type.isEmpty ? nil : type,
+                did: did,
+                lang: lang.isEmpty ? nil : lang,
+                authors: authors.isEmpty ? nil : authors,
+                format: format.isEmpty ? nil : format,
+                summary: summary.isEmpty ? nil : summary,
+                publisher: session.liveFid
+            )
+            // Re-saving an existing draft replaces it rather than
+            // leaving a second row: the id is a digest of the content,
+            // so an edit produces a new key and the old one has to go.
+            if let editing, editing.onChain == false, editing.id != draft.id {
+                _ = try? session.texts.remove(id: editing.id)
+            }
+            draft.addedAt = editing?.addedAt ?? Date()
+            draft.cover = cover.imageId
+            try session.texts.upsert(draft)
+            onDone(.draft)
+        } catch {
+            self.error = String(describing: error)
+        }
+    }
+
+    private func publish() async {
+        busy = true
+        defer { busy = false }
+        error = nil
+        do {
+            var did = editing?.did
+            if let url = pickedURL {
+                progressNote = "Uploading the file to DISK…"
+                did = try await session.publishBody.storeFile(at: url)
+            }
+
+            let carve = { (coverId: String?) async throws in
+                progressNote = "Carving the record…"
+                if isNewEdition, let record = editing {
+                    let txid = try await session.carveTextUpdateOnChain(
+                        textId: record.id,
+                        title: title,
+                        type: type.isEmpty ? nil : type,
+                        did: did,
+                        lang: lang.isEmpty ? nil : lang,
+                        authors: authors.isEmpty ? nil : authors,
+                        format: format.isEmpty ? nil : format,
+                        summary: summary.isEmpty ? nil : summary,
+                        // "" removes a cover the record had.
+                        cover: coverId ?? ""
+                    )
+                    progressNote = nil
+                    onDone(.updated(txid))
+                } else {
+                    let record = try await session.carveTextPublishOnChain(
+                        title: title,
+                        type: type.isEmpty ? nil : type,
+                        did: did,
+                        lang: lang.isEmpty ? nil : lang,
+                        authors: authors.isEmpty ? nil : authors,
+                        format: format.isEmpty ? nil : format,
+                        summary: summary.isEmpty ? nil : summary,
+                        cover: coverId,
+                        draftId: editing?.onChain == false ? editing?.id : nil
+                    )
+                    progressNote = nil
+                    onDone(.carved(record))
+                }
+            }
+            if case .newFile(let file) = cover {
+                try await session.carveTogether(
+                    then: .text,
+                    note: "Approving this also signs the text carve that names this image as its cover."
+                ) {
+                    progressNote = "Publishing the cover image…"
+                    let id = try await session.publishCoverImage(
+                        at: file, title: "\(title) — cover", lang: lang.isEmpty ? nil : lang,
+                        authors: authors.isEmpty ? nil : authors)
+                    // A retry names this image rather than carving another.
+                    cover = .image(id: id)
+                    if let editing, editing.onChain == false, var draft = try? session.texts.get(id: editing.id) {
+                        draft.cover = id
+                        try? session.texts.upsert(draft)
+                    }
+                    try await carve(id)
+                }
+            } else {
+                try await carve(cover.imageId)
+            }
+        } catch {
+            progressNote = nil
+            self.error = String(describing: error)
+        }
+    }
+}
+
+// MARK: - read
+
+/// Read a published text, and the remarks anchored to it.
+///
+/// **The body is fetched, not carried.** What the chain holds is a
+/// hash; this sheet asks ``PublishBody`` for the bytes behind it, which
+/// tries this device, then our own DISK, then the publisher's. Every one
+/// of those verifies the hash before showing a word, so what is on
+/// screen is the work the publisher committed to or nothing at all.
+struct TextReaderSheet: View {
+    let session: ActiveSession
+    let record: TextRecord
+    let name: (String) -> String?
+    let onClose: () -> Void
+
+    /// The verified body on this device, once fetched.
+    @State private var bodyURL: URL?
+    @State private var loadingBody = true
+    @State private var bodyError: String?
+
+    /// Set while the rating composer is up.
+    @State private var rating = false
+
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            header
+            Divider()
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    if let cover = record.cover {
+                        CoverView(session: session, imageId: cover)
+                        Divider()
+                    }
+                    bodySection
+                    Divider()
+                    // The ★ in the header is the CDD-weighted mean and
+                    // nothing else; who rated it, how much they staked
+                    // and why lives only in `text_history`.
+                    RatingHistoryView(
+                        session: session,
+                        kind: .text,
+                        subjectId: record.id,
+                        name: name
+                    )
+                    Divider()
+                    RemarkThreadView(session: session, targetId: record.id, name: name)
+                }
+                .padding(.trailing, 4)
+            }
+
+            HStack {
+                Button {
+                    rating = true
+                } label: {
+                    Label("Rate", systemImage: "star")
+                }
+                .disabled(!canRate)
+                .help(rateHelp)
+                Spacer()
+                Button("Close") { onClose() }
+                    .keyboardShortcut(.cancelAction)
+            }
+        }
+        .padding(20)
+        .sheetFrame(width: 680, height: 680)
+        // This sheet draws FIDs of its own, and a sheet cannot present
+        // another sheet through the window's host — so it installs one.
+        .fidDetailsHost(session: session)
+        .sheet(isPresented: $rating) {
+            RateRecordSheet(
+                session: session,
+                kind: .text,
+                subjectId: record.id,
+                title: record.title?.isEmpty == false ? record.title! : "Untitled",
+                owner: record.publisher,
+                currentRate: record.tRate,
+                currentCdd: record.tCdd,
+                onDone: { _ in rating = false },
+                onCancel: { rating = false }
+            )
+        }
+        .onAppear { loadBody() }
+    }
+
+    /// A text's own publisher may not rate it — the parser discards
+    /// such a carve after the fee is spent — and an unconfirmed record
+    /// has no id to name.
+    private var canRate: Bool {
+        !record.id.isEmpty && record.publisher != session.liveFid
+    }
+
+    private var rateHelp: String {
+        if record.id.isEmpty {
+            return "This text has no on-chain id yet."
+        }
+        if record.publisher == session.liveFid {
+            return "You published this text, and the protocol ignores a rating from its own publisher."
+        }
+        return "Rate this text 0–5, weighted by the coin-days you spend."
+    }
+
+    // MARK: - header
+
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Text(record.title?.isEmpty == false ? record.title! : "Untitled")
+                    .font(.title3.bold())
+                if record.isDeleted {
+                    Text("Deleted")
+                        .font(.caption2.bold())
+                        .padding(.horizontal, 6).padding(.vertical, 2)
+                        .background(Capsule().fill(Color.red.opacity(0.15)))
+                        .foregroundStyle(.red)
+                }
+                Spacer()
+                if let rate = record.tRate {
+                    Text(String(format: "★ %.1f", rate))
+                        .font(.callout)
+                        .foregroundStyle(.orange)
+                        .help("CDD-weighted over \(record.tCdd ?? 0) coin-days")
+                }
+            }
+
+            HStack(spacing: 10) {
+                FidValue(record.publisher, name: record.publisher.flatMap(name))
+                if let ver = record.ver {
+                    Text("edition \(ver)").font(.caption).foregroundStyle(.secondary)
+                } else {
+                    Text("edition —")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                        .help("This record was indexed before the server set an edition counter, so it has none. It is not a first edition; it is an unknown one.")
+                }
+                if let t = record.lastTime {
+                    Text(Date(timeIntervalSince1970: TimeInterval(t)).formatted(date: .abbreviated, time: .shortened))
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+
+            if let summary = record.summary, !summary.isEmpty {
+                Text(summary).font(.callout).foregroundStyle(.secondary)
+            }
+
+            HStack(spacing: 12) {
+                idLine("Record", record.id)
+                if let did = record.did { idLine("Document", did) }
+            }
+            PublishLocasLine(locas: record.locas)
+        }
+    }
+
+    private func idLine(_ label: String, _ value: String) -> some View {
+        HStack(spacing: 3) {
+            Text(label).font(.caption2).foregroundStyle(.tertiary)
+            CopyableText(
+                display: value.elidingMiddle(head: 8, tail: 8),
+                copy: value,
+                font: .system(.caption2, design: .monospaced)
+            )
+            .foregroundStyle(.secondary)
+        }
+    }
+
+    // MARK: - body
+
+    @ViewBuilder
+    private var bodySection: some View {
+        if loadingBody {
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.small)
+                Text("Fetching the work…").font(.callout).foregroundStyle(.secondary)
+            }
+        } else if let url = bodyURL {
+            // Text, Markdown, Word, RTF, OpenDocument or PDF — the view
+            // decides from the bytes. Records carved before texts were
+            // files are plain text and still read as such.
+            PublishDocumentView(url: url, format: record.format, title: record.name)
+        } else if record.did == nil {
+            Label("This record has no body", systemImage: "doc")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+        } else {
+            VStack(alignment: .leading, spacing: 6) {
+                CopyableLabel("The work could not be fetched", systemImage: "exclamationmark.triangle")
+                    .font(.callout)
+                    .foregroundStyle(.orange)
+                if let e = bodyError {
+                    CopyableText(e, font: .caption).foregroundStyle(.secondary)
+                }
+                Button("Try again") { loadBody() }
+                    .controlSize(.small)
+            }
+        }
+    }
+
+    private func loadBody() {
+        guard let did = record.did, !did.isEmpty else {
+            loadingBody = false
+            return
+        }
+        loadingBody = true
+        bodyError = nil
+        Task {
+            do {
+                let url = try await session.publishBody.fetchURL(
+                    did: did, publisher: record.publisher, locas: record.locas,
+                    work: try? Hat.fromText(record)
+                )
+                await MainActor.run {
+                    bodyURL = url
+                    loadingBody = false
+                }
+            } catch {
+                await MainActor.run {
+                    bodyError = String(describing: error)
+                    loadingBody = false
+                }
+            }
+        }
+    }
+}

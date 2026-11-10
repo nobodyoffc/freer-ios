@@ -1,0 +1,177 @@
+import SwiftUI
+import UIKit
+import FCDomain
+import FCUI
+
+/// Export modal for a freshly-built unsigned transaction (the
+/// watch-only Send fallback). Shows the coin-selection summary and
+/// the `RawTxInfo` JSON — Android `CreateTxActivity`'s import format
+/// — with three ways out: **Copy JSON**, **Save…** to a file, and
+/// **Show QR** (long documents chunk across multiple codes, which
+/// the Android side merges back on scan).
+struct UnsignedTxSheet: View {
+    let info: RawTxInfo
+    /// One line describing what the document does — inputs, fee, size.
+    /// Passed in rather than derived because a reorg and a send are
+    /// priced by different planners and neither summary reads well in
+    /// the other's vocabulary.
+    let summaryText: String
+    let onDone: () -> Void
+
+    init(info: RawTxInfo, summary: String, onDone: @escaping () -> Void) {
+        self.info = info
+        self.summaryText = summary
+        self.onDone = onDone
+    }
+
+    init(result: WalletService.UnsignedSendResult, onDone: @escaping () -> Void) {
+        let p = result.plan
+        self.init(
+            info: result.info,
+            summary: "\(p.selected.count) input(s) · \(p.totalIn) sat in · fee \(p.fee) sat · \(p.estimatedSize) B"
+                + (p.hasChange ? " · change \(p.change) sat" : " · no change"),
+            onDone: onDone
+        )
+    }
+
+    @State private var json: String = ""
+    @State private var encodeError: String?
+    @State private var copied = false
+    @State private var saveNote: String?
+    @State private var showQr = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 10) {
+                Image(systemName: "signature").font(.title2)
+                Text("Unsigned transaction").font(.title3).bold()
+                Spacer()
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 10) {
+                summary
+
+                if let err = encodeError {
+                    CopyableText(err, font: .caption)
+                        .foregroundStyle(.red)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    jsonPane
+                }
+
+                if let note = saveNote {
+                    CopyableText(note, font: .caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Text("Sign it where the key lives: the Android app imports this document in Create Tx (paste or QR scan), signs, and broadcasts.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(16)
+
+            Divider()
+
+            HStack(spacing: 8) {
+                Button {
+                    copyJson()
+                } label: {
+                    Label(copied ? "Copied" : "Copy JSON",
+                          systemImage: copied ? "checkmark.circle.fill" : "doc.on.doc")
+                }
+                .foregroundStyle(copied ? .green : .primary)
+
+                Button {
+                    saveJson()
+                } label: {
+                    Label("Save…", systemImage: "square.and.arrow.down")
+                }
+
+                Button {
+                    showQr = true
+                } label: {
+                    Label("Show QR", systemImage: "qrcode")
+                }
+                .help("Render the document as QR codes — long content is split across several; scan them all on the signer to merge.")
+
+                Spacer()
+
+                Button("Done") { onDone() }
+                    .keyboardShortcut(.defaultAction)
+                    .buttonStyle(.borderedProminent)
+            }
+            .disabled(json.isEmpty && encodeError == nil)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+        }
+        .sheetFrame(minWidth: 560)
+        .onAppear { encode() }
+        .sheet(isPresented: $showQr) {
+            QrDisplaySheet(content: json) { showQr = false }
+        }
+    }
+
+    private var summary: some View {
+        CopyableText(summaryText, font: .caption.monospaced())
+            .foregroundStyle(.secondary)
+    }
+
+    private var jsonPane: some View {
+        ScrollView {
+            Text(json)
+                .font(.system(.caption, design: .monospaced))
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(8)
+        }
+        .frame(minHeight: 160, maxHeight: 280)
+        .background(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(Color(nsColor: .textBackgroundColor))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .strokeBorder(Color.secondary.opacity(0.3), lineWidth: 0.5)
+        )
+    }
+
+    private func encode() {
+        do {
+            json = try info.exportJson()
+        } catch {
+            encodeError = String(describing: error)
+        }
+    }
+
+    private func copyJson() {
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(json, forType: .string)
+        copied = true
+        Task {
+            try? await Task.sleep(nanoseconds: 1_200_000_000)
+            await MainActor.run { copied = false }
+        }
+    }
+
+    private func saveJson() {
+        Task { @MainActor in
+            do {
+                let saved = try await FilePanel.export(
+                    named: "unsignedTx_\(Int(Date().timeIntervalSince1970)).json"
+                ) { url in
+                    try Data(json.utf8).write(to: url)
+                }
+                if let saved { saveNote = "Saved to \(saved)" }
+            } catch {
+                saveNote = "Save failed: \(error.localizedDescription)"
+            }
+        }
+    }
+}

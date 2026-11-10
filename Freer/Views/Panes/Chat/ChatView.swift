@@ -1,0 +1,2942 @@
+import SwiftUI
+import FCCore
+import FCDomain
+import FCUI
+
+/// The chat pane — the Mac port of Android's `TalkActivity`,
+/// `RoomActivity`, `TeamActivity` and `SquareActivity`, plus the
+/// `ChatActivity` they all open.
+///
+/// **Four flavours, four lists.** Phase 9.2.7a put all four in one list
+/// on the grounds that everything separating them had been settled
+/// below the view. That was true of *sealing* and of nothing else. A
+/// square is public and unencrypted, a room is sealed to a membership
+/// only its owner knows, a team is sealed to a membership the chain
+/// publishes, and a P2P chat is sealed to one person — four security
+/// models, four sets of things that can go wrong, and one list in which
+/// they differed by a small coloured chip. Android never merges them,
+/// and the reason is the one that matters: the defence against sending
+/// a private message into a public square is that the two never look
+/// alike and are never one mis-click apart.
+///
+/// So: a tab per flavour, each with its own list, its own selection, its
+/// own draft and its own colour; ``ChatModeStyle`` is the single place
+/// that colour and wording are decided.
+///
+/// **What you may send is a decision, not a view condition.** The pane
+/// used to check whether we had left the group and let everything else
+/// fail at send time. ``ChatGate`` now answers it in advance —
+/// membership, the group's DOCK, and whether we hold the key — and this
+/// view renders the verdict.
+///
+/// **Delivery is store-and-forward.** Sending seals a message, files it
+/// and queues it; the courier parks it at the recipient's DOCK, where it
+/// waits until they next collect. "Sent" means the DOCK took it and
+/// nothing more.
+struct ChatView: View {
+    let session: ActiveSession
+
+    /// The shell owns the poller. This pane only tells it two things:
+    /// that a chat is on screen (so it polls faster), and which DOCK
+    /// the open conversation lives on (so that one is polled fastest).
+    @Environment(AppState.self) private var appState
+
+    /// Which flavour's tab is showing. Everything below is scoped to it.
+    @State private var mode: ImType = .p2p
+    @Environment(\.horizontalSizeClass) private var sizeClass
+    /// Set by choosing a conversation in the list — never by the pane
+    /// selecting one for itself, as it does when it first appears.
+    @State private var phoneReading = false
+
+    /// Threads per flavour. Kept apart rather than filtered out of one
+    /// array so that nothing — a stale index, a sort, a search — can put
+    /// a square in front of someone who thinks they are in a P2P list.
+    @State private var threads: [ImType: [Conversation]] = [:]
+    /// The open thread **per flavour**: switching tabs must not carry a
+    /// selection across a security boundary.
+    @State private var selection: [ImType: String] = [:]
+    /// Unsent text, per conversation. A draft typed for one thread
+    /// following you into another is the same class of mistake this
+    /// whole pane exists to prevent.
+    @State private var drafts: [String: String] = [:]
+
+    @State private var page: MessagesStore.Page = .init(messages: [], olderCursor: nil)
+
+    /// Messages typed here that the store has not taken yet, per
+    /// conversation. Pressing Send has to fetch the recipient's key
+    /// before anything can be sealed and filed, and a round trip is a
+    /// long time to stare at a text box that has already emptied itself
+    /// — so the bubble goes up now, as Queued, and the stored row
+    /// replaces it under the same id the moment there is one.
+    @State private var inFlight: [String: [ImMessage]] = [:]
+
+    @State private var search = ""
+
+    /// Senders this identity has not agreed to hear from, and how many
+    /// messages each is holding. Only ever non-empty on the Chats tab —
+    /// group traffic does not go through the stranger gate.
+    @State private var requests: [MessageRequest] = []
+
+    @State private var loadError: String?
+    @State private var sendError: String?
+    /// The sent message the composer is editing, and the draft it displaced.
+    @State private var editing: EditTarget?
+    @State private var confirmWithdraw: ImMessage?
+    @State private var showNewChat = false
+    @State private var showDetails = false
+    @State private var showRequests = false
+    @State private var showPolicy = false
+    @State private var showMembers = false
+    @State private var showRoomSettings = false
+    /// The on-chain twin of `showRoomSettings` — a team's or a square's
+    /// details, which are changed by carving rather than by telling.
+    @State private var showGroupSettings = false
+    /// Which "ask somebody for something" sheet is open, if any. Nil is
+    /// closed — the sheet needs to know *what* is being asked for, so a
+    /// bare Bool could not say it.
+    @State private var asking: AskMembersSheet.Ask?
+    /// Room invitations waiting for an answer. Rooms tab only — a team
+    /// or a square is joined by carving, not by being invited here.
+    @State private var invites: [RoomInvite] = []
+    /// Teams whose consensus changed under this identity and which are
+    /// waiting on an `agree consensus` carve. Teams tab only, and read
+    /// from the chain by the group sync — see ``ConsensusSignatureSheet``.
+    @State private var consensusDue: [ConsensusSignatureRequest] = []
+    /// Teams we own that members left since the key last changed, so the
+    /// removed can still read what follows until we rotate (FIMP4V3
+    /// §3.3). Read from the chain by the group sync, never sent to us.
+    @State private var rotationsDue: [KeyRotationReminder] = []
+    @State private var showConsensus = false
+    /// A team's consensus document, opened for reading from that team's
+    /// menu. A request rather than a Bool because the sheet cannot work
+    /// out for itself *which* document or where to fetch it from, and
+    /// both are read off the team record at the moment the item is
+    /// pressed — not later, when the selection may have moved on.
+    @State private var readingConsensus: ConsensusRead?
+    /// Teams inviting this identity in or being handed to it, not yet
+    /// answered. Teams tab only — see ``TeamOffersSheet``.
+    @State private var teamOffers: [TeamOffer] = []
+    @State private var showTeamOffers = false
+    @State private var showTransfer = false
+    @State private var showServantTeams = false
+    /// `"<liveFid>|<teamId>"` for teams this identity does not own but may
+    /// hand over, as their owner's master. Filled for the selected team only, from the
+    /// owner's chain record — see ``checkMasterOfSelectedTeam()``.
+    @State private var masterOfOwner: Set<String> = []
+    /// The team the owner asked to disband, held until they confirm.
+    @State private var confirmDisband: Conversation?
+    /// Teams and squares carved for and not yet shown by the chain, per
+    /// flavour — Android's pending rows.
+    @State private var pending: [ImType: [PendingGroup]] = [:]
+    /// Invitations and agreements waiting on an answer, per flavour, for
+    /// the tab badges.
+    @State private var awaiting: [ImType: Int] = [:]
+    /// Groups whose DOCK refused the last connection, per flavour.
+    @State private var unreachable: [ImType: Set<String>] = [:]
+    /// Choosing several threads to leave, close or disband together.
+    /// Nil when not choosing.
+    @State private var checked: Set<String>?
+    @State private var confirmBulk: BulkAction?
+    @State private var showHistoryAsk = false
+    /// Somebody asked for a conversation's messages, and only a person
+    /// can say yes — what they would take includes what other people
+    /// wrote. Each tab shows the ones about its own flavour.
+    @State private var historyRequests: [IncomingHistoryRequest] = []
+    /// Answers to our own asks that could not be fetched, and have
+    /// stopped retrying on their own.
+    @State private var historyFailures: [ReceivedHistoryShare] = []
+    /// Symkeys this device has asked for and not been given. Persisted
+    /// state, not a toast: it is what tells a person recovery has stalled
+    /// and who they are already waiting on.
+    @State private var keyAsks: [KeyAsk] = []
+    @State private var showKeyLedger = false
+    /// The ask the user pressed Share on, held until they confirm.
+    @State private var confirmShareHistory: IncomingHistoryRequest?
+    /// Which ask is uploading right now, so its row can say so.
+    @State private var sharingHistory: String?
+    @State private var confirmLeave = false
+    /// The thread the user asked to delete, held until they confirm.
+    /// Nil is "nothing pending" — a Bool could not name the row, and the
+    /// row can be any of the four flavours.
+    @State private var confirmDelete: Conversation?
+    /// A nobody about to be called: its key is public (NOBODY_SPEC §3).
+    @State private var confirmNobodyCall: String?
+    /// The Room or Team whose members are being chosen for a meeting (Decision 20).
+    @State private var meetingPicker: Conversation?
+    /// Why a meeting could not start or be joined.
+    @State private var meetingError: String?
+    @State private var syncing = false
+    @State private var syncSummary: String?
+    @State private var delivering = false
+    @State private var attaching = false
+    @State private var attachProgress: (sent: Int64, total: Int64)?
+    /// The chat files being fetched or that failed to fetch, by data id.
+    /// Keyed by the HAT rather than the message so the same file
+    /// forwarded twice shows one transfer, and a second click on either
+    /// card cannot start another.
+    @State private var downloads: [String: ChatFileDownload] = [:]
+
+    /// One recorder and one player for the whole pane. The player is
+    /// shared on purpose — see ``VoicePlayer``: two notes talking over
+    /// each other is never what a click meant.
+    @State private var recorder = VoiceRecorder()
+    @State private var player = VoicePlayer()
+    @State private var sendingVoice = false
+
+    /// Resolved once per recipient, then reused: a P2P send needs the
+    /// other party's pubkey and it never changes.
+    @State private var pubkeys: [String: Data] = [:]
+
+    /// Who the FIDs on screen are — the CID the chain publishes for
+    /// each, so a transcript names people instead of reciting digits.
+    /// One book for the whole pane rather than one per flavour: the
+    /// same person turns up in a room, a team and a chat, and they are
+    /// the same person in all three. The app's, so the meeting panel
+    /// names them the same way.
+    private var names: ChatNameBook { appState.chatNames }
+
+    // MARK: - derived
+
+    private var style: ChatModeStyle { .of(mode) }
+
+    private var conversations: [Conversation] { threads[mode] ?? [] }
+
+    private var filtered: [Conversation] {
+        let needle = search.trimmingCharacters(in: .whitespaces)
+        guard !needle.isEmpty else { return conversations }
+        return conversations.filter { $0.matches(query: needle) }
+    }
+
+    /// The list of conversations on the current tab.
+    private var conversationList: some View {
+        ConversationListView(
+            style: style,
+            conversations: filtered,
+            names: names,
+            selectedId: selectedId,
+            onDelete: { confirmDelete = $0 },
+            unreachable: unreachable[mode] ?? [],
+            checked: checked == nil ? nil : Binding(
+                get: { checked ?? [] },
+                set: { checked = $0 }
+            )
+        )
+    }
+
+    /// On a phone: a conversation has been opened and fills the pane,
+    /// with the tabs, the toolbar and the list put away behind it.
+    private var readingOnPhone: Bool {
+        compact && phoneReading && selected != nil
+    }
+
+    private var compact: Bool { sizeClass == .compact }
+
+    private var selectedId: Binding<String?> {
+        Binding(
+            get: { selection[mode] },
+            set: {
+                selection[mode] = $0
+                // The list writes here only when a row is tapped — the
+                // one already selected included.
+                if $0 != nil { phoneReading = true }
+            }
+        )
+    }
+
+    private var selected: Conversation? {
+        guard let id = selection[mode] else { return nil }
+        return conversations.first { $0.id == id }
+    }
+
+    /// What the composer may do here, decided before it is drawn.
+    private var verdict: ChatGate.Verdict {
+        guard let selected else { return .open }
+        return ChatGate.decide(session.chatGateFacts(for: selected))
+    }
+
+    private var draft: Binding<String> {
+        Binding(
+            get: { selection[mode].map { drafts[$0] ?? "" } ?? "" },
+            set: { if let id = selection[mode] { drafts[id] = $0 } }
+        )
+    }
+
+    private var leaveTitle: String { "Leave this \(style.noun)?" }
+
+    private var leaveConfirmTitle: String {
+        style.syncsFromChain ? "Leave (broadcast a carve)" : "Leave"
+    }
+
+    /// What leaving actually costs, said before it is done. The two
+    /// on-chain flavours cost money and are public; a room is neither,
+    /// but rejoining needs a fresh invitation.
+    private var leaveMessage: String {
+        switch mode {
+        case .team, .square:
+            return "Leaving is a transaction: it costs a miner fee and is public on the chain. You are still in until it confirms. The transcript stays on this device."
+        case .room:
+            return "The owner is told, and only they can let you back in. The transcript stays on this device."
+        case .p2p:
+            return ""
+        }
+    }
+
+    private func deleteTitle(_ conversation: Conversation?) -> String {
+        guard let conversation else { return "Delete?" }
+        let name = ChatFormat.title(of: conversation)
+        return "Delete \(name)?"
+    }
+
+    /// What deleting actually destroys, said before it is done.
+    ///
+    /// The four flavours differ in what *survives* it, and the
+    /// difference is not cosmetic. A room lives only on the devices that
+    /// hold it, so deleting our copy is the last word here — including,
+    /// for an owner, the membership itself. A team or a square is on the
+    /// chain, so this only forgets the local transcript: we are still in
+    /// it, and the next sync opens the thread again.
+    private func deleteMessage(_ conversation: Conversation) -> String {
+        let common = "Every message in it goes too, and there is no copy anywhere else."
+        switch conversation.type {
+        case .room:
+            let owned = session.chatGateFacts(for: conversation).isOwner
+            return owned
+                ? "\(common) This room's key and its membership exist only on this device, so both are gone with it — the other members are not told, and are not removed from their own copies. Close the room first if they should be."
+                : "\(common) The room's key goes with it, so nothing said here can be reopened. The other members are not told; leave the room first if they should be."
+        case .team, .square:
+            return "\(common) Only this device's copy — your membership is on the chain, so you are still in it and the thread reappears at the next sync. Leave it first if that is what you meant."
+        case .p2p:
+            return "\(common) They are not told, and nothing stops them writing again."
+        }
+    }
+
+    private func unread(_ type: ImType) -> Int {
+        (threads[type] ?? []).reduce(0) { $0 + ($1.unreadCount ?? 0) }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+          if readingOnPhone {
+            Button {
+                phoneReading = false
+            } label: {
+                Label("All \(style.title.lowercased())", systemImage: "chevron.left")
+            }
+            .buttonStyle(.borderless)
+            transcript
+          } else {
+            PaneHeader(session: session)
+            Divider()
+            modeTabs
+            toolbar
+
+            if mode == .p2p, !requests.isEmpty {
+                requestsBanner
+            }
+            if mode == .room, !invites.isEmpty {
+                invitesBanner
+            }
+            if !(pending[mode] ?? []).isEmpty {
+                pendingBanner
+            }
+            if mode == .team, !teamOffers.isEmpty {
+                teamOffersBanner
+            }
+            if mode == .team, !consensusDue.isEmpty {
+                consensusBanner
+            }
+            if mode == .team, !rotationsDue.isEmpty {
+                rotationBanner
+            }
+            if !historyRequestsHere.isEmpty || !historyFailuresHere.isEmpty {
+                historyBanner
+            }
+            if !keyAsksHere.isEmpty {
+                keyAsksBanner
+            }
+            if syncSummary != nil {
+                statusBanner
+            }
+
+            if let err = loadError {
+                card {
+                    CopyableLabel("Couldn't load chats", systemImage: "exclamationmark.triangle")
+                        .foregroundStyle(.red)
+                    CopyableText(err, font: .callout).foregroundStyle(.red)
+                }
+            } else if conversations.isEmpty {
+                emptyCard
+            } else {
+                if checked != nil {
+                    selectionBar
+                }
+                if compact {
+                    // A phone shows one of the two at a time: the list here,
+                    // and the conversation over it once one is chosen.
+                    conversationList
+                } else {
+                    HStack(alignment: .top, spacing: 12) {
+                        conversationList
+                            .frame(width: 260)
+                        Divider()
+                        transcript
+                    }
+                }
+            }
+
+            Spacer(minLength: 0)
+          }
+        }
+        .padding()
+        .sheetFrame(minWidth: 720)
+        .onAppear {
+            // An Overview tile can ask for a specific flavour. Consume it
+            // before the first reload so the pane never paints the wrong
+            // tab first.
+            if let requested = appState.consumePendingChatMode() { mode = requested }
+            if appState.consumePendingNewChat() { showNewChat = true }
+            if appState.consumePendingTeamOffers() { showTeamOffers = true }
+            reload()
+            if selection[mode] == nil { selection[mode] = conversations.first?.id }
+            openSelected()
+            appState.setChatOpen(true)
+            appState.fetchInboxNow()
+            updatePriorityDock()
+            retryUnreachable()
+            refreshTeamAnswers()
+        }
+        .onDisappear {
+            appState.setChatOpen(false)
+            appState.setPriorityDock(nil)
+            // The microphone does not keep running behind a pane that
+            // is not on screen, and an unsent recording is not a draft.
+            recorder.cancel()
+            player.stop()
+        }
+        // A flavour change is at least as sharp a context switch as a
+        // thread change: a note recorded for a room must not be sendable
+        // into a square, and the search box belongs to the list that was
+        // being searched.
+        .onChange(of: mode) { _, _ in
+            phoneReading = false
+            recorder.cancel()
+            player.stop()
+            search = ""
+            // A selection is of one list, and the tab just changed lists.
+            checked = nil
+            retryUnreachable()
+            if selection[mode] == nil { selection[mode] = conversations.first?.id }
+            openSelected()
+            updatePriorityDock()
+            refreshTeamAnswers()
+        }
+        .onChange(of: selection[mode]) { _, _ in
+            recorder.cancel()
+            player.stop()
+            openSelected()
+            updatePriorityDock()
+        }
+        .task(id: selection[mode]) { await checkMasterOfSelectedTeam() }
+        // The poller files straight into the stores, behind this view's
+        // back. Without this the transcript would sit stale until the
+        // user touched something.
+        .onChange(of: appState.inboxRevision) { _, _ in
+            reload()
+            openSelected()
+        }
+        // A meeting card opened, changed or ended outside the poller: a card
+        // this device posted, or one only it holds (Decision 20).
+        .onChange(of: appState.meetingCenter.cardsRevision) { _, _ in
+            reload()
+            openSelected()
+        }
+        .sheet(isPresented: Binding(get: { meetingPicker != nil }, set: { if !$0 { meetingPicker = nil } })) {
+            if let conversation = meetingPicker {
+                MemberPickerSheet(
+                    title: "Meet with whom?",
+                    members: session.entityMembers(type: conversation.type, entityId: conversation.targetId)
+                        .filter { $0 != session.liveFid },
+                    names: MeetingNames(book: names, session: session),
+                    confirm: "Start meeting"
+                ) { chosen in startMeeting(in: conversation, invitees: chosen) }
+            }
+        }
+        .alert("Meeting", isPresented: Binding(get: { meetingError != nil }, set: { if !$0 { meetingError = nil } })) {
+            Button("OK", role: .cancel) { meetingError = nil }
+        } message: {
+            Text(meetingError ?? "")
+        }
+        .sheet(isPresented: $showDetails) {
+            if let conversation = selected {
+                ChatPartyDetailSheet(
+                    session: session,
+                    conversation: conversation,
+                    onClose: { showDetails = false }
+                )
+            }
+        }
+        .sheet(item: $asking) { ask in
+            if let conversation = selected {
+                AskMembersSheet(
+                    session: session,
+                    style: style,
+                    conversation: conversation,
+                    ask: ask,
+                    names: names,
+                    onClose: { asking = nil },
+                    onSent: { summary in syncSummary = summary }
+                )
+            }
+        }
+        .sheet(isPresented: $showKeyLedger) {
+            if let conversation = selected {
+                SymkeyLedgerSheet(
+                    session: session,
+                    style: style,
+                    conversation: conversation,
+                    names: names,
+                    onClose: { showKeyLedger = false }
+                )
+            }
+        }
+        .sheet(isPresented: $showHistoryAsk) {
+            if let conversation = selected {
+                RequestHistorySheet(
+                    session: session,
+                    style: style,
+                    conversation: conversation,
+                    names: names,
+                    onClose: { showHistoryAsk = false },
+                    onSent: { summary in syncSummary = summary }
+                )
+            }
+        }
+        // Driven by the ask itself, not by the selection, for the reason
+        // the Delete dialog below gives.
+        .confirmationDialog(
+            "Share this history?",
+            isPresented: Binding(
+                get: { confirmShareHistory != nil },
+                set: { if !$0 { confirmShareHistory = nil } }
+            ),
+            titleVisibility: .visible,
+            presenting: confirmShareHistory
+        ) { request in
+            Button("Share") { approveHistory(request) }
+            Button("Cancel", role: .cancel) { confirmShareHistory = nil }
+        } message: { request in
+            Text(shareHistoryMessage(request))
+        }
+        .sheet(isPresented: $showMembers) {
+            if let conversation = selected {
+                MemberListSheet(
+                    session: session,
+                    style: style,
+                    conversation: conversation,
+                    names: names,
+                    onClose: { showMembers = false },
+                    onChanged: { reload() }
+                )
+            }
+        }
+        .sheet(isPresented: $showRoomSettings) {
+            if let conversation = selected, conversation.type == .room {
+                RoomSettingsSheet(
+                    session: session,
+                    roomId: conversation.targetId,
+                    onClose: { showRoomSettings = false },
+                    onSaved: { summary in
+                        showRoomSettings = false
+                        syncSummary = summary
+                        reload()
+                        // The room may have moved to a different DOCK,
+                        // and the poller is still watching the old one.
+                        Task {
+                            await session.refreshDockRegistry()
+                            await MainActor.run { updatePriorityDock() }
+                        }
+                    }
+                )
+            }
+        }
+        .sheet(isPresented: $showGroupSettings) { groupSettingsSheet }
+        .confirmationDialog(
+            leaveTitle,
+            isPresented: $confirmLeave,
+            titleVisibility: .visible
+        ) {
+            if let conversation = selected {
+                Button(leaveConfirmTitle, role: .destructive) { leave(conversation) }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(leaveMessage)
+        }
+        // The dialog is driven by the row itself (`presenting:`), never
+        // by the selection: right-clicking Delete on a thread does not
+        // open it, so a dialog that acted on "the selection" would
+        // cheerfully delete a different conversation from the one whose
+        // name it was showing. That is the worst bug a destructive
+        // action can have, and it is one binding away.
+        .confirmationDialog(
+            deleteTitle(confirmDelete),
+            isPresented: Binding(
+                get: { confirmDelete != nil },
+                set: { if !$0 { confirmDelete = nil } }
+            ),
+            titleVisibility: .visible,
+            presenting: confirmDelete
+        ) { conversation in
+            Button("Delete", role: .destructive) { delete(conversation) }
+            Button("Cancel", role: .cancel) { confirmDelete = nil }
+        } message: { conversation in
+            Text(deleteMessage(conversation))
+        }
+        .confirmationDialog(
+            "Call a nobody?",
+            isPresented: Binding(
+                get: { confirmNobodyCall != nil },
+                set: { if !$0 { confirmNobodyCall = nil } }
+            ),
+            titleVisibility: .visible,
+            presenting: confirmNobodyCall
+        ) { fid in
+            Button("Call") { appState.callCenter.placeCall(to: fid) }
+            Button("Cancel", role: .cancel) { confirmNobodyCall = nil }
+        } message: { _ in
+            Text("This is a nobody FID: anyone may hold its key, so a call with it is only as private as a public square.")
+        }
+        .sheet(isPresented: $showTeamOffers) {
+            TeamOffersSheet(
+                session: session,
+                onClose: { showTeamOffers = false },
+                onChanged: { reload() }
+            )
+        }
+        .sheet(isPresented: $showServantTeams) {
+            ServantTeamsSheet(
+                session: session,
+                onClose: { showServantTeams = false },
+                onDone: { summary in
+                    showServantTeams = false
+                    syncSummary = summary
+                }
+            )
+        }
+        .sheet(isPresented: $showTransfer) {
+            if let conversation = selected, conversation.type == .team {
+                TeamTransferSheet(
+                    session: session,
+                    teamId: conversation.targetId,
+                    onClose: { showTransfer = false },
+                    onDone: { summary in
+                        showTransfer = false
+                        syncSummary = summary
+                    }
+                )
+            }
+        }
+        // Driven by the row, like Delete, so the dialog cannot disband a
+        // different team from the one it names.
+        .confirmationDialog(
+            "Disband \(confirmDisband.map { ChatFormat.title(of: $0) } ?? "this team")?",
+            isPresented: Binding(
+                get: { confirmDisband != nil },
+                set: { if !$0 { confirmDisband = nil } }
+            ),
+            titleVisibility: .visible,
+            presenting: confirmDisband
+        ) { conversation in
+            Button("Disband (broadcast a carve)", role: .destructive) { disbandTeam(conversation) }
+            Button("Cancel", role: .cancel) { confirmDisband = nil }
+        } message: { _ in
+            Text("Disbanding is a transaction and it cannot be undone: the team stops for every member, and nobody can join, speak in or take it over again. It costs a miner fee and is public. The transcript and keys stay on this device.")
+        }
+        .confirmationDialog(
+            "Withdraw this message?",
+            isPresented: Binding(
+                get: { confirmWithdraw != nil },
+                set: { if !$0 { confirmWithdraw = nil } }
+            ),
+            titleVisibility: .visible,
+            presenting: confirmWithdraw
+        ) { message in
+            Button("Withdraw", role: .destructive) {
+                if let conversation = selected { withdraw(message, in: conversation) }
+                confirmWithdraw = nil
+            }
+            Button("Cancel", role: .cancel) { confirmWithdraw = nil }
+        } message: { _ in
+            Text("Recipients' Freer apps will remove it, and it is deleted from the DOCK where Freer can. Anyone who has already read, copied or saved it may keep a copy.")
+        }
+        .confirmationDialog(
+            confirmBulk?.title ?? "",
+            isPresented: Binding(
+                get: { confirmBulk != nil },
+                set: { if !$0 { confirmBulk = nil } }
+            ),
+            titleVisibility: .visible,
+            presenting: confirmBulk
+        ) { action in
+            Button(action.confirm, role: .destructive) { perform(action) }
+            Button("Cancel", role: .cancel) { confirmBulk = nil }
+        } message: { action in
+            Text(action.message)
+        }
+        .sheet(isPresented: $showConsensus) {
+            ConsensusSignatureSheet(
+                session: session,
+                onClose: { showConsensus = false },
+                onChanged: { reload() }
+            )
+        }
+        .sheet(item: $readingConsensus) { request in
+            ConsensusDocumentSheet(
+                session: session,
+                title: request.title,
+                consensusId: request.consensusId,
+                diskSids: request.diskSids,
+                editable: false,
+                onSaved: { _ in readingConsensus = nil },
+                onClose: { readingConsensus = nil }
+            )
+        }
+        .sheet(isPresented: $showRequests) {
+            MessageRequestsSheet(
+                session: session,
+                names: names,
+                onClose: { showRequests = false },
+                onChanged: {
+                    reload()
+                    openSelected()
+                }
+            )
+        }
+        .sheet(isPresented: $showPolicy) {
+            StrangerPolicySheet(session: session, onClose: { showPolicy = false })
+        }
+        // A join or create broadcast from the sheet leaves a row waiting
+        // for the chain, which should be on screen when the sheet goes.
+        .sheet(isPresented: $showNewChat, onDismiss: { reload() }) {
+            NewChatSheet(
+                session: session,
+                mode: mode,
+                onOpened: { id, note in
+                    showNewChat = false
+                    reload()
+                    if let opened = try? session.conversations.get(id: id) {
+                        mode = opened.type
+                    }
+                    selection[mode] = id
+                    syncSummary = note
+                },
+                onBroadcast: { note in
+                    showNewChat = false
+                    reload()
+                    if let note { syncSummary = note }
+                },
+                onCancel: { showNewChat = false }
+            )
+        }
+    }
+
+    // MARK: - chrome
+
+    /// A team's or a square's on-chain details. Lifted out of `body`
+    /// because the two flavours share one sheet and the check for which
+    /// is which does not belong in an already long view builder.
+    @ViewBuilder
+    private var groupSettingsSheet: some View {
+        if let conversation = selected, ChatModeStyle.of(conversation.type).syncsFromChain {
+            GroupSettingsSheet(
+                session: session,
+                mode: conversation.type,
+                groupId: conversation.targetId,
+                onClose: { showGroupSettings = false },
+                onSaved: { summary in
+                    showGroupSettings = false
+                    syncSummary = summary
+                }
+            )
+        }
+    }
+
+    /// The four flavours, as tabs rather than as rows in one list.
+    private var modeTabs: some View {
+        FlowRow(spacing: 6) {
+            ForEach(ChatModeStyle.all) { candidate in
+                let count = unread(candidate.mode)
+                Button {
+                    mode = candidate.mode
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: candidate.systemImage)
+                        Text(candidate.title)
+                        if count > 0 {
+                            Text("\(count)")
+                                .font(.caption2.bold())
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 1)
+                                .background(Capsule().fill(candidate.tint))
+                                .foregroundStyle(.white)
+                        }
+                        // Not unread messages: invitations and agreements
+                        // waiting on an answer, which otherwise show only
+                        // inside the tab they belong to.
+                        if let asks = awaiting[candidate.mode], asks > 0 {
+                            HStack(spacing: 2) {
+                                Image(systemName: "envelope.badge")
+                                Text("\(asks)")
+                            }
+                            .font(.caption2.bold())
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(Capsule().fill(Color.orange))
+                            .foregroundStyle(.white)
+                            .help("\(asks) invitation\(asks == 1 ? "" : "s") or request\(asks == 1 ? "" : "s") waiting for your answer")
+                        }
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(
+                        RoundedRectangle(cornerRadius: 7)
+                            .fill(candidate.mode == mode
+                                  ? candidate.tint.opacity(0.18)
+                                  : Color(NSColor.controlBackgroundColor))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 7)
+                            .stroke(candidate.mode == mode ? candidate.tint : .clear, lineWidth: 1)
+                    )
+                    .foregroundStyle(candidate.mode == mode ? AnyShapeStyle(candidate.tint) : AnyShapeStyle(.primary))
+                }
+                .buttonStyle(.plain)
+                .help(candidate.summary)
+            }
+            Spacer(minLength: 0)
+        }
+    }
+
+    private var toolbar: some View {
+        FlowRow(spacing: 12) {
+            Text(style.title)
+                .font(.headline)
+                .foregroundStyle(style.isPublic ? AnyShapeStyle(style.tint) : AnyShapeStyle(.primary))
+
+            Spacer()
+
+            SearchField("Search \(style.title.lowercased())…", text: $search, minWidth: 140)
+                .help("Matches the name, the id, and the last message shown")
+
+            // Only the on-chain flavours have anything to refresh: a
+            // team's and a square's membership is the chain's answer,
+            // while a room and a P2P chat are made here.
+            if style.syncsFromChain {
+                Button {
+                    Task { await syncGroups() }
+                } label: {
+                    if syncing {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Label("Refresh", systemImage: "arrow.clockwise")
+                    }
+                }
+                .disabled(syncing)
+                .help("Pull the \(style.title.lowercased()) this FID belongs to from the chain")
+            }
+
+            Button {
+                Task { await exchange() }
+            } label: {
+                if delivering {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Label("Send & receive", systemImage: "arrow.up.arrow.down")
+                }
+            }
+            .disabled(delivering || !session.canSign)
+            .help("Park queued messages at their recipients' DOCKs, and collect whatever ours is holding for us")
+
+            if mode != .p2p, !conversations.isEmpty {
+                Button {
+                    checked = checked == nil ? [] : nil
+                } label: {
+                    Label(checked == nil ? "Select" : "Done", systemImage: "checklist")
+                }
+                .help("Choose several \(style.title.lowercased()) to leave, close or disband at once")
+            }
+
+            Button {
+                showNewChat = true
+            } label: {
+                Label(style.newActionTitle, systemImage: "square.and.pencil")
+            }
+            .buttonStyle(.borderedProminent)
+
+            tabMenu
+        }
+    }
+
+    /// The tab's own menu — what Android puts behind the ⋮ on each of
+    /// its four list screens, and it is different on each of them
+    /// because the four flavours are governed in four different ways.
+    @ViewBuilder
+    private var tabMenu: some View {
+        Menu {
+            switch mode {
+            case .p2p:
+                Button("Message requests…") { showRequests = true }
+                Button("Call settings…") { appState.showCallSettings = true }
+                Button("Who can message me…") { showPolicy = true }
+            case .team:
+                // Both reachable when nothing is outstanding: an ignored
+                // invitation and a postponed agreement each have to be
+                // findable again, and their banners deliberately stop
+                // asking.
+                Button("Team invitations…") { showTeamOffers = true }
+                Button("Consensus agreements…") { showConsensus = true }
+                Divider()
+                Button("Servants' teams…") { showServantTeams = true }
+            case .room, .square:
+                // The per-flavour membership actions land with the rest
+                // of the group menus; until then there is nothing here
+                // that would be true.
+                Text("Nothing here yet")
+            }
+        } label: {
+            Image(systemName: "ellipsis.circle")
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+    }
+
+    /// Held messages have to be visible somewhere or holding them would
+    /// be no better than dropping them — but they are deliberately *not*
+    /// in the thread list, since being in that list is exactly the thing
+    /// a stranger has not been granted.
+    private var requestsBanner: some View {
+        let senders = requests.count
+        let messages = requests.reduce(0) { $0 + $1.count }
+        return Button {
+            showRequests = true
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "tray.full")
+                Text("\(messages) message\(messages == 1 ? "" : "s") from \(senders) sender\(senders == 1 ? "" : "s") you haven't accepted")
+                Spacer()
+                Text("Review").font(.caption.bold())
+            }
+            .font(.callout)
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 8).fill(Color.orange.opacity(0.14)))
+        }
+        .buttonStyle(.plain)
+        .help("These are stored on this device and appear nowhere else until you accept them")
+    }
+
+    /// Teams that want this identity in them — invited, or handed over.
+    private var teamOffersBanner: some View {
+        let invitations = teamOffers.filter { $0.kind == .invitation }.count
+        let transfers = teamOffers.count - invitations
+        var parts: [String] = []
+        if invitations > 0 { parts.append("\(invitations) team invitation\(invitations == 1 ? "" : "s")") }
+        if transfers > 0 { parts.append("\(transfers) team\(transfers == 1 ? "" : "s") being handed to you") }
+        let unconfirmed = teamOffers.contains { !$0.isOnChain }
+        return Button {
+            showTeamOffers = true
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "person.3.sequence")
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(parts.joined(separator: " · "))
+                    if unconfirmed {
+                        Text("Some are only notices so far — the chain does not list them yet.")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Spacer()
+                Text("Review").font(.caption.bold())
+            }
+            .font(.callout)
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 8).fill(style.tint.opacity(0.12)))
+        }
+        .buttonStyle(.plain)
+        .help("Read each team's consensus, then join, take over, or ignore")
+    }
+
+    /// Teams that changed their consensus out from under this identity.
+    ///
+    /// **A banner rather than a notification, because nothing was sent.**
+    /// The chain lists us in `notAgreeMembers` and that is the entire
+    /// signal; it is read on every group refresh, so this appears without
+    /// anybody having messaged us and disappears without anybody having
+    /// to dismiss it.
+    private var consensusBanner: some View {
+        let count = consensusDue.count
+        return Button {
+            showConsensus = true
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "signature")
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("\(count) team\(count == 1 ? "" : "s") changed \(count == 1 ? "its" : "their") consensus document")
+                    Text("Until you agree on chain, what you signed and what the team runs on are two different documents.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Text("Review").font(.caption.bold())
+            }
+            .font(.callout)
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 8).fill(Color.orange.opacity(0.14)))
+        }
+        .buttonStyle(.plain)
+        .help("Read the new consensus and the one you agreed to, then agree, put it off, or leave")
+    }
+
+    /// Teams we own that members left, or were dismissed from, while the
+    /// key stayed the same.
+    ///
+    /// **Rotating is the owner's tap, here, on this device** — never done
+    /// on sight of the removal, because every device of the owner would
+    /// mint in the same second (FIMP4V3 §7.2). The row clears itself
+    /// once a newer key exists, including one minted on another device.
+    private var rotationBanner: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(rotationsDue) { reminder in
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "key.horizontal")
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Key rotation due · \(reminder.teamName ?? reminder.id)")
+                        Text("Removed: " + reminder.removedFids
+                            .map { names.labelWithContact(for: $0) }
+                            .joined(separator: ", "))
+                            .font(.caption)
+                        Text("They still hold the current key and can read new messages until you rotate it.")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button("Rotate key") { rotateKey(for: reminder) }
+                        .help("Mint a new team key and share it with the remaining members")
+                    Button("Later") {
+                        _ = try? session.keyRotations.postpone(teamId: reminder.id)
+                        reload()
+                    }
+                    .help("Hide this until another member leaves")
+                }
+            }
+        }
+        .font(.callout)
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Color.orange.opacity(0.14)))
+    }
+
+    /// Rotate from the banner: the same reset as the team menu's.
+    private func rotateKey(for reminder: KeyRotationReminder) {
+        let id = Conversation.id(type: .team, targetId: reminder.id)
+        guard let conversation = try? session.conversations.get(id: id) else {
+            sendError = "This team's conversation is not on this device yet. Refresh, then rotate from the team's menu."
+            return
+        }
+        generateKey(for: conversation)
+    }
+
+    /// Room invitations, with the two facts that decide the answer:
+    /// who says so, and that nothing about the claim can be checked.
+    private var invitesBanner: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(invites) { invite in
+                HStack(spacing: 8) {
+                    Image(systemName: "envelope.open")
+                    VStack(alignment: .leading, spacing: 1) {
+                        HStack(spacing: 4) {
+                            NobodyChip(fid: invite.from)
+                            Text("\(invite.name ?? "A room") — invitation from \(names.labelWithContact(for: invite.from))")
+                        }
+                        NobodyBanner(fid: invite.from, message: NobodyText.inviter)
+                        Text("Nothing about a room is on the chain, so this claim cannot be checked against anything. Accept only if you expected it.")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button("Accept") { accept(invite) }
+                        .buttonStyle(.borderedProminent)
+                    Button("Decline") { decline(invite) }
+                }
+                .font(.callout)
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(RoundedRectangle(cornerRadius: 8).fill(style.tint.opacity(0.12)))
+            }
+        }
+        .task(id: invites.map(\.from)) {
+            names.resolve(invites.map(\.from), session: session)
+        }
+    }
+
+    private var historyRequestsHere: [IncomingHistoryRequest] {
+        historyRequests.filter { $0.type == mode }
+    }
+
+    private var historyFailuresHere: [ReceivedHistoryShare] {
+        historyFailures.filter { Self.type(ofConversationId: $0.conversationId) == mode }
+    }
+
+    /// A conversation id is `<TYPE>_<target>`, and no type name has an
+    /// underscore in it.
+    private static func type(ofConversationId id: String) -> ImType? {
+        ImType(rawValue: String(id.prefix(while: { $0 != "_" })))
+    }
+
+    /// The thread an ask is about, as the list would name it.
+    private func historyThreadName(_ conversationId: String, type: ImType, targetId: String) -> String {
+        if type == .p2p { return names.cid(of: targetId) ?? targetId.elidingMiddle(head: 6, tail: 6) }
+        if let conversation = try? session.conversations.get(id: conversationId) {
+            return ChatFormat.title(of: conversation)
+        }
+        return targetId.elidingMiddle(head: 6, tail: 6)
+    }
+
+    /// The symkey asks outstanding for the thread on screen.
+    ///
+    /// Scoped to the open conversation because that is the only one whose
+    /// transcript is showing locked rows: an ask for another room is not
+    /// something to answer here.
+    private var keyAsksHere: [KeyAsk] {
+        guard let conversation = selected,
+              conversation.type == .team || conversation.type == .room
+        else { return [] }
+        return keyAsks
+            .filter { $0.entityId == conversation.targetId }
+            .sorted { $0.version < $1.version }
+    }
+
+    /// **A key we asked for and have not been given.**
+    ///
+    /// The durable half of the exchange. The courier asks automatically
+    /// the moment a locked row is filed (FIMP §7.4), so by the time
+    /// anybody reads this the question has already gone out — what a
+    /// person needs is what is still outstanding, who they are waiting
+    /// on, and the two decisions only they can make: ask somebody else,
+    /// or stop.
+    private var keyAsksBanner: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(keyAsksHere) { ask in
+                HStack(spacing: 8) {
+                    Image(systemName: "key.slash")
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(keyAskTitle(ask))
+                        Text(keyAskDetail(ask))
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer()
+                    Button("Ask more members…") { asking = .symkey(version: ask.version) }
+                    Button("Give up") { giveUp(ask) }
+                        .help("Stops showing this. The messages stay, and stay locked.")
+                }
+                .font(.callout)
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(RoundedRectangle(cornerRadius: 8).fill(Color.orange.opacity(0.10)))
+            }
+        }
+        .task(id: keyAsksHere.flatMap(\.askedFids)) {
+            names.resolve(keyAsksHere.flatMap(\.askedFids), session: session)
+        }
+    }
+
+    private func keyAskTitle(_ ask: KeyAsk) -> String {
+        let held = (try? session.symkeys.versions(for: ask.entityId)) ?? []
+        let named = SymkeyVersionText.inProse(
+            ask.version,
+            withTime: SymkeyVersionText.needsTime(ask.version, among: held + [ask.version])
+        )
+        return "Waiting for \(named)"
+    }
+
+    /// Who was asked, and how long ago — the part a person acts on.
+    ///
+    /// Named rather than counted: "asked 2 members" tells you nothing you
+    /// can do, while a name tells you who to chase in person and who not
+    /// to bother asking twice.
+    private func keyAskDetail(_ ask: KeyAsk) -> String {
+        let who = ask.askedFids.map { fid -> String in
+            fid == session.liveFid
+                ? "your other devices"
+                : names.labelWithContact(for: fid)
+        }
+        let asked = who.isEmpty ? "nobody yet" : who.formatted(.list(type: .and))
+        let ago = Date(timeIntervalSince1970: Double(ask.lastAskedAt) / 1000)
+            .formatted(.relative(presentation: .named))
+        return "Asked \(asked) \(ago). \(ask.attempts) request\(ask.attempts == 1 ? "" : "s") sent."
+    }
+
+    /// Stop showing one ask. The locked messages stay locked — giving up
+    /// on the question is not the same as giving up on the key, and a
+    /// later push from the owner still lands.
+    private func giveUp(_ ask: KeyAsk) {
+        do {
+            _ = try session.keyAsks.remove(entityId: ask.entityId, version: ask.version)
+            keyAsks = try session.keyAsks.all()
+        } catch {
+            syncSummary = String(describing: error)
+        }
+    }
+
+    /// History asks waiting for an answer, and answers that could not be
+    /// fetched. Both are about one thread each, so each row says which.
+    private var historyBanner: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(historyRequestsHere) { request in
+                HStack(spacing: 8) {
+                    Image(systemName: "clock.arrow.circlepath")
+                    VStack(alignment: .leading, spacing: 1) {
+                        HStack(spacing: 4) {
+                            NobodyChip(fid: request.from)
+                            Text(historyAskTitle(request))
+                        }
+                        Text(historyAskDetail(request))
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    if sharingHistory == request.id {
+                        ProgressView().controlSize(.small)
+                        Text("Uploading…").font(.caption)
+                    } else {
+                        Button("Share…") { confirmShareHistory = request }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(sharingHistory != nil || !session.canSign)
+                        Button("Decline") { declineHistory(request) }
+                            .disabled(sharingHistory != nil)
+                    }
+                }
+                .font(.callout)
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(RoundedRectangle(cornerRadius: 8).fill(style.tint.opacity(0.12)))
+            }
+            ForEach(historyFailuresHere) { share in
+                HStack(spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle").foregroundStyle(.orange)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("History from \(share.from.elidingMiddle(head: 6, tail: 6)) could not be added")
+                        CopyableText(share.lastError ?? "", font: .caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button("Retry") { retryHistoryImport(share) }
+                    Button("Dismiss") { dismissHistoryImport(share) }
+                }
+                .font(.callout)
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(RoundedRectangle(cornerRadius: 8).fill(Color.orange.opacity(0.14)))
+            }
+        }
+        .task(id: historyRequestsHere.map(\.from)) {
+            names.resolve(historyRequestsHere.map(\.from), session: session)
+        }
+    }
+
+    private func historyAskTitle(_ request: IncomingHistoryRequest) -> String {
+        let who = request.from == session.liveFid
+            ? "Your other device"
+            : names.labelWithContact(for: request.from)
+        let thread = historyThreadName(request.conversationId, type: request.type, targetId: request.targetId)
+        return request.type == .p2p
+            ? "\(who) asks for your conversation with \(request.from == session.liveFid ? thread : "them")"
+            : "\(who) asks for the messages in \(thread)"
+    }
+
+    private func historyAskDetail(_ request: IncomingHistoryRequest) -> String {
+        let count = (try? session.historyShare.messageCount(for: request)) ?? 0
+        let range = HistoryRangeText.format(since: request.since, before: request.before)
+        return count == 0
+            ? "\(range.prefix(1).uppercased() + range.dropFirst()) — this device holds nothing in that range."
+            : "\(range.prefix(1).uppercased() + range.dropFirst()) — \(count) message\(count == 1 ? "" : "s") on this device."
+    }
+
+    /// What sharing hands over, said before it is done. The part people
+    /// miss is that a group transcript is mostly other people's words.
+    private func shareHistoryMessage(_ request: IncomingHistoryRequest) -> String {
+        let count = (try? session.historyShare.messageCount(for: request)) ?? 0
+        let range = HistoryRangeText.format(since: request.since, before: request.before)
+        let whose = request.type == .p2p ? "both sides of the conversation" : "what every member wrote, not only you"
+        return "\(count) message\(count == 1 ? "" : "s") \(range) — \(whose) — are uploaded encrypted to your DISK, and the key to open them goes to \(request.from). They keep a copy; this cannot be taken back."
+    }
+
+    @ViewBuilder
+    private var emptyCard: some View {
+        card {
+            Label(style.emptyTitle, systemImage: style.systemImage)
+                .foregroundStyle(style.isPublic ? AnyShapeStyle(style.tint) : AnyShapeStyle(.secondary))
+            Text(style.summary)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Text(style.syncsFromChain
+                 ? "Refresh to pull the \(style.title.lowercased()) this FID already belongs to, or join one by id."
+                 : "Start one with the button above.")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+        }
+    }
+
+    /// What the last action did — the one place it is said.
+    ///
+    /// It used to live on ``emptyCard``, which is drawn *only* when the
+    /// flavour has no threads at all. So every result reported this way
+    /// — a key reset, a leave, an ask, a sync — was written to a view
+    /// that by definition was not on screen at the time: you cannot
+    /// reset a team's key without having a team open, and having one
+    /// open is exactly what replaces that card with the list. The
+    /// action worked and said so into nothing.
+    ///
+    /// Above the list rather than inside the transcript, because not
+    /// every one of these is about the open thread: a refresh summary
+    /// and a leave are about the flavour.
+    @ViewBuilder
+    private var statusBanner: some View {
+        if let summary = syncSummary {
+            HStack(spacing: 8) {
+                Image(systemName: "checkmark.circle").foregroundStyle(style.tint)
+                CopyableText(summary, font: .callout)
+                Spacer()
+                Button("Dismiss") { syncSummary = nil }
+                    .buttonStyle(.borderless)
+                    .font(.caption)
+            }
+            .padding(8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 8).fill(style.tint.opacity(0.08)))
+        }
+    }
+
+    // MARK: - transcript
+
+    @ViewBuilder
+    private var transcript: some View {
+        if let conversation = selected {
+            VStack(alignment: .leading, spacing: 10) {
+                transcriptHeader(conversation)
+                // The board explains itself; any other nobody partner is a
+                // conversation anyone can read and write as.
+                if conversation.type == .p2p, !NobodyBoard.isDefaultNobody(conversation.targetId) {
+                    NobodyBanner(fid: conversation.targetId, message: NobodyText.partner)
+                }
+                Divider()
+
+                TranscriptView(
+                    session: session,
+                    style: style,
+                    conversation: conversation,
+                    page: page,
+                    player: player,
+                    names: names,
+                    onLoadOlder: loadOlder,
+                    downloads: downloads,
+                    onDownload: download,
+                    onAskForKey: { version in asking = .symkey(version: version) },
+                    onEdit: { beginEdit($0, in: conversation) },
+                    onWithdraw: { confirmWithdraw = $0 }
+                )
+
+                if let editing, editing.conversationId == conversation.id {
+                    editBanner(editing)
+                }
+
+                MessageComposerView(
+                    style: style,
+                    verdict: verdict,
+                    draft: draft,
+                    recorder: recorder,
+                    attaching: attaching,
+                    sendingVoice: sendingVoice,
+                    attachProgress: attachProgress,
+                    errorText: sendError ?? player.failure,
+                    onSend: { send(in: conversation) },
+                    onAttach: { attach(in: conversation) },
+                    onStartRecording: { Task { await recorder.start(in: voiceDirectory) } },
+                    onSendVoice: { sendVoice(in: conversation) },
+                    onCancelRecording: { recorder.cancel() },
+                    onGenerateKey: { generateKey(for: conversation) },
+                    callControl: callControl(for: conversation)
+                )
+            }
+        } else {
+            card {
+                Text("Pick a \(style.noun) on the left.")
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    /// The header wears the flavour's colour as a band, so which kind of
+    /// conversation is open is answerable without reading anything.
+    private func transcriptHeader(_ conversation: Conversation) -> some View {
+        let name = headerName(conversation)
+        return HStack(spacing: 8) {
+            Rectangle().fill(style.tint).frame(width: 3, height: 22)
+
+            // A P2P thread's face, beside its name. A group already has
+            // one on every row of the list it was picked from; the
+            // person you are talking to had one nowhere at all.
+            if conversation.type == .p2p {
+                FidAvatarView(
+                    fid: conversation.targetId,
+                    size: 24,
+                    isNobody: names.isNobody(conversation.targetId)
+                )
+                NobodyChip(fid: conversation.targetId, compact: false)
+            }
+            if let name {
+                Text(name)
+                    .font(.title3.bold())
+                    .foregroundStyle(style.mode == .p2p ? AnyShapeStyle(.primary) : AnyShapeStyle(style.tint))
+                    .lineLimit(1)
+            } else {
+                // Nothing has published a name for this thread, so the
+                // id stands in the title's place rather than being
+                // printed twice — once as a heading and once as a
+                // badge, elided two different ways, which reads as two
+                // different identities.
+                identityTag(conversation, size: .large)
+            }
+            // Who the user knows this FID as, beside its CID or FID —
+            // never instead of it.
+            if conversation.type == .p2p,
+               let label = names.contactLabel(of: conversation.targetId) {
+                Text(label)
+                    .font(.title3)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            if conversation.leftGroup == true {
+                ChatChip(conversation.type == .room ? "closed" : "left", color: .secondary)
+            }
+            if style.isPublic {
+                ChatChip("public", color: style.tint)
+            }
+            if let members = conversation.memberNum, members > 0 {
+                Text("\(members) members").font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer()
+            // The id, badged rather than greyed. It is the one string in
+            // this pane that has to be copied exactly — to add a
+            // contact, to invite somebody, to check you are in the
+            // thread you think you are — and it was drawn as the
+            // faintest thing on the row.
+            if name != nil {
+                identityTag(conversation, size: .small)
+            }
+
+            Button {
+                showDetails = true
+            } label: {
+                Image(systemName: "info.circle")
+            }
+            .buttonStyle(.borderless)
+            .help("Who this is, where their messages rest, and whether that server is reachable")
+
+            conversationMenu(conversation)
+        }
+    }
+
+    /// This thread's id, badged. Never carries the CID: when there is
+    /// one it is the heading beside this, and repeating it would cost
+    /// the badge the one fact it is here to carry.
+    private func identityTag(
+        _ conversation: Conversation, size: ChatIdentityTag.Size
+    ) -> ChatIdentityTag {
+        ChatIdentityTag(
+            fid: conversation.targetId,
+            tint: style.tint,
+            size: size,
+            noun: conversation.type == .p2p ? "FID" : "group id"
+        )
+    }
+
+    /// The thread's name in its header — **nil when it has none**.
+    ///
+    /// A group's name is its own. A person's is their CID, which is the
+    /// chain's answer and not anything stored when the thread was
+    /// opened: a chat started by somebody else messaging us was never
+    /// given one. Nil rather than falling back to the FID, because the
+    /// id already has a place on this row — printing it twice, elided
+    /// two different ways, reads as two different identities.
+    private func headerName(_ conversation: Conversation) -> String? {
+        if conversation.type == .p2p {
+            return names.cid(of: conversation.targetId) ?? conversation.displayName
+        }
+        // A group with no name of its own falls back to its id, and
+        // that is the id the tag is already showing.
+        guard let name = conversation.displayName, name != conversation.targetId else {
+            return nil
+        }
+        return name
+    }
+
+    /// What you can *do* to this conversation — and the four flavours
+    /// differ here more than anywhere else, which is why Android has
+    /// four separate menus and this switches rather than showing a
+    /// superset with half of it greyed out.
+    @ViewBuilder
+    private func conversationMenu(_ conversation: Conversation) -> some View {
+        let facts = session.chatGateFacts(for: conversation)
+        Menu {
+            switch conversation.type {
+            case .p2p:
+                Button("Request history…") { showHistoryAsk = true }
+                Divider()
+                Button("Block this FID") { block(conversation) }
+                Button("Delete…", role: .destructive) { confirmDelete = conversation }
+
+            case .room:
+                Button("Members…") { showMembers = true }
+                Button("Ask for the key…") { asking = .symkey(version: nil) }
+                Button("Symkey exchange…") { showKeyLedger = true }
+                Button("Ask for this room's details…") { asking = .roomInfo }
+                Button("Request history…") { showHistoryAsk = true }
+                if facts.isOwner {
+                    Divider()
+                    Button("Room settings…") { showRoomSettings = true }
+                    Button("Share the room's details…") { asking = .shareRoomInfo }
+                    Button("Reset the key") { generateKey(for: conversation) }
+                    Button("Close this room", role: .destructive) { disband(conversation) }
+                } else {
+                    Button("Leave this room", role: .destructive) { confirmLeave = true }
+                }
+                Button("Delete…", role: .destructive) { confirmDelete = conversation }
+
+            case .team:
+                let team = (try? session.teams.get(id: conversation.targetId)) ?? nil
+                let isManager = team.map { TeamGovernance.canManage($0, session.liveFid) } ?? false
+                // Managers invite, withdraw and dismiss; the owner also
+                // appoints. All of it lives on the member list, row by
+                // row, which is where a person is being acted on.
+                Button(isManager ? "Members & invitations…" : "Members…") { showMembers = true }
+                // Offered to every member, not just the owner. The
+                // consensus is the one part of a team a member is on
+                // chain as having *agreed* to, and until now the only
+                // ways back to the text were an invitation and a change
+                // waiting to be signed — both of which stop being
+                // offered the moment they are answered. The owner has
+                // had it all along, behind team settings; this is the
+                // same document fetched the same way, minus the carve.
+                Button("Consensus document…") { readConsensus(conversation, team: team) }
+                Button("Ask for the key…") { asking = .symkey(version: nil) }
+                Button("Symkey exchange…") { showKeyLedger = true }
+                Button("Request history…") { showHistoryAsk = true }
+                if facts.isOwner {
+                    // Owner-only, as on Android's owner sub-menu. The
+                    // chain enforces it; this only declines to offer a
+                    // fee for nothing.
+                    Divider()
+                    Button("Team settings (carve)…") { showGroupSettings = true }
+                    Button("Hand over this team…") { showTransfer = true }
+                    Button("Reset the key") { generateKey(for: conversation) }
+                } else if masterOfOwner.contains(session.liveFid + "|" + conversation.targetId) {
+                    // FEIP18 rule 16: the owner's master may transfer,
+                    // and nothing else.
+                    Divider()
+                    Button("Hand over this team as its owner's master…") { showTransfer = true }
+                }
+                Divider()
+                if facts.isOwner {
+                    // The owner cannot leave: the parser skips the owner
+                    // in a `leave`, so the carve would be paid for and do
+                    // nothing. Handing over or disbanding are the ways out.
+                    Button("Disband this team (carve)…", role: .destructive) {
+                        confirmDisband = conversation
+                    }
+                    .disabled(conversation.leftGroup == true)
+                } else {
+                    Button("Leave this team (carve)…", role: .destructive) { confirmLeave = true }
+                }
+                Button("Delete…", role: .destructive) { confirmDelete = conversation }
+
+            case .square:
+                // **No "ask for the key".** A square has no key, and an
+                // item offering to fetch one would advertise a privacy
+                // the flavour does not have. Android ships exactly that
+                // item in `popup_group_chat_menu.xml` — with no click
+                // listener bound, so it does nothing at all.
+                Button("Members…") { showMembers = true }
+                Button("Request history…") { showHistoryAsk = true }
+                // Offered to every member, and that is the rule rather
+                // than a convenience: nobody owns a square and nobody is
+                // privileged in one. An update is accepted from whoever
+                // destroys more coin-days than the last update did, so
+                // there is no role here to gate the item on.
+                Button("Square settings (carve)…") { showGroupSettings = true }
+                Divider()
+                Button("Leave this square (carve)…", role: .destructive) { confirmLeave = true }
+                Button("Delete…", role: .destructive) { confirmDelete = conversation }
+            }
+        } label: {
+            Image(systemName: "ellipsis.circle")
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+    }
+
+    /// Where recordings live. The session's own directory rather than a
+    /// temp one, because a note too long to travel inline is *shared by
+    /// reference* — ``FileVault`` registers the path, so bytes the
+    /// system might sweep are not somewhere to leave a shared file.
+    private var voiceDirectory: URL {
+        session.dataDirectory.appendingPathComponent("voice", isDirectory: true)
+    }
+
+    // MARK: - actions
+
+    /// The phone in the composer: a call in a 1:1 chat; in a Room or Team,
+    /// the menu that starts a meeting for everyone or for chosen people.
+    private func callControl(for conversation: Conversation) -> AnyView? {
+        let calls = appState.callCenter
+        let meetings = appState.meetingCenter
+        let busy = (calls.phase != .idle && calls.phase != .ended) || meetings.isActive
+        switch conversation.type {
+        case .p2p where conversation.targetId != session.liveFid:
+            // Dimmed, not disabled: the known home may be stale, and placing
+            // the call reads it fresh from the chain.
+            let noCall = calls.knownWithoutCall(conversation.targetId, in: session)
+            return AnyView(
+                Button {
+                    // A nobody's key is public: calling one asks first (NOBODY_SPEC §3).
+                    if names.isNobody(conversation.targetId) { confirmNobodyCall = conversation.targetId }
+                    else { calls.placeCall(to: conversation.targetId) }
+                } label: { Image(systemName: "phone") }
+                .buttonStyle(.borderless)
+                .opacity(noCall ? 0.4 : 1)
+                .help(noCall
+                      ? "Voice call — they have no CALL service, so a call cannot ring them. Clicking checks the chain again."
+                      : "Voice call")
+                .disabled(busy)
+            )
+        case .room where conversation.leftGroup != true, .team where conversation.leftGroup != true:
+            return AnyView(
+                Menu {
+                    Button("Everyone in this chat") { startMeeting(in: conversation, invitees: nil) }
+                    // Only them: a key of the meeting's own goes to each alone (Decision 20).
+                    Button("Choose people…") { meetingPicker = conversation }
+                } label: {
+                    Image(systemName: "phone")
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .help("Start a voice meeting")
+                .disabled(busy)
+            )
+        default:
+            return nil
+        }
+    }
+
+    /// Start a meeting in a Room or Team: everyone in it, or only `invitees`.
+    private func startMeeting(in conversation: Conversation, invitees: [String]?) {
+        let meetings = appState.meetingCenter
+        Task {
+            if let why = await meetings.start(type: conversation.type, entityId: conversation.targetId,
+                                              title: nil, invitees: invitees) {
+                meetingError = why
+            }
+        }
+    }
+
+    private func reload() {
+        do {
+            // Who each group avatar badges, from the records already on
+            // this device. Rows written before the owner was recorded
+            // have no other occasion to learn it — the syncs that know it
+            // are events, and those already fired.
+            try session.groupOwners.refill()
+
+            var rebuilt: [ImType: [Conversation]] = [:]
+            for style in ChatModeStyle.all {
+                rebuilt[style.mode] = try session.conversations.visible(type: style.mode)
+            }
+            threads = rebuilt
+            requests = try session.messageRequests.pending()
+            invites = try session.roomInvites.all()
+            // Only the ones still asking: a member who put one off has
+            // answered, and the banner must not keep arguing with them.
+            // The sheet behind it still lists every row.
+            consensusDue = try session.consensusSignatures.outstanding()
+            rotationsDue = try session.keyRotations.outstanding()
+            teamOffers = try session.teamOffers.waiting(fid: session.liveFid)
+            // A carve the chain now shows has nothing left to wait for.
+            _ = try? session.pendingGroups.reconcile(
+                fid: session.liveFid, teams: session.teams,
+                squares: session.squares, conversations: session.conversations
+            )
+            var waitingOnChain: [ImType: [PendingGroup]] = [:]
+            var asks: [ImType: Int] = [:]
+            for style in ChatModeStyle.all {
+                waitingOnChain[style.mode] = (try? session.pendingGroups.all(
+                    fid: session.liveFid, type: style.mode
+                )) ?? []
+                asks[style.mode] = session.awaitingAnswer(type: style.mode)
+            }
+            pending = waitingOnChain
+            awaiting = asks
+            refreshUnreachable()
+            historyRequests = try session.historyShares.incoming()
+            historyFailures = try session.historyShares.received().filter(\.waitsForRetry)
+            keyAsks = try session.keyAsks.all()
+            // Every P2P thread's other party, so the list can name its
+            // rows. Group targets are deliberately not asked about: a
+            // room id is not a FID, and a group already carries its own
+            // name.
+            names.resolve(
+                (rebuilt[.p2p] ?? []).map(\.targetId) + requests.map(\.fid),
+                session: session
+            )
+            loadError = nil
+        } catch {
+            loadError = String(describing: error)
+        }
+    }
+
+    private func openSelected() {
+        guard let id = selection[mode] else {
+            page = .init(messages: [], olderCursor: nil)
+            return
+        }
+        do {
+            // A key can arrive long after the messages it opens, and for
+            // a transcript sealed before the key landed there is no
+            // later arrival to react to — the key is already in the
+            // store and no second copy is coming. So the flavours that
+            // have keys check on the way in, which is also what repairs
+            // a transcript sealed by any earlier version of this app.
+            // Costs one read of the key names when there is no key, and
+            // that is the case it returns on.
+            if mode == .team || mode == .room,
+               let targetId = try session.conversations.get(id: id)?.targetId {
+                try session.chat.openSealed(forEntity: targetId, as: session.liveFid)
+            }
+            page = withInFlight(try session.chat.page(id), of: id)
+            // Everyone who has spoken in this thread. A transcript is a
+            // handful of people saying many things, so the set is small
+            // however long the page is — and the book drops the ones it
+            // has already asked about before it asks anything.
+            names.resolve(page.messages.compactMap(\.senderId), session: session)
+            let nowRead = try session.chat.markRead(id)
+            reload()
+            acknowledgeRead(nowRead)
+        } catch {
+            loadError = String(describing: error)
+        }
+    }
+
+    /// Tell the senders we read their messages.
+    ///
+    /// Opening a thread is the only moment a `read` status can be
+    /// honestly reported, and without this the sender never advances past
+    /// `delivered`. Fire-and-forget on purpose: a receipt that cannot be
+    /// sent is a status the sender does not see, not an error for the
+    /// reader to deal with, so nothing here touches `loadError`.
+    private func acknowledgeRead(_ messages: [ImMessage]) {
+        let theirs = messages.filter { $0.senderId != session.liveFid && $0.type == .p2p }
+        guard !theirs.isEmpty else { return }
+        Task {
+            for message in theirs {
+                guard let senderId = message.senderId else { continue }
+                let conversationId = Conversation.id(type: .p2p, targetId: senderId)
+                guard let conversation = try? session.conversations.get(id: conversationId),
+                      let keys = try? await sendKeys(for: conversation)
+                else { continue }
+                _ = try? session.chat.acknowledge(message, kind: .read, as: session.liveFid, keys: keys)
+            }
+            _ = try? await session.courier.drainOutbox(as: session.liveFid)
+        }
+    }
+
+    private func loadOlder() {
+        guard let id = selection[mode], let cursor = page.olderCursor else { return }
+        do {
+            let older = try session.chat.page(id, before: cursor)
+            names.resolve(older.messages.compactMap(\.senderId), session: session)
+            page = .init(
+                messages: older.messages + page.messages,
+                olderCursor: older.olderCursor
+            )
+        } catch {
+            loadError = String(describing: error)
+        }
+    }
+
+    /// The transcript as the store has it, plus anything still on its
+    /// way into the store. An id the store already knows wins: that copy
+    /// is the real row, with a real status on it.
+    private func withInFlight(_ stored: MessagesStore.Page, of conversationId: String) -> MessagesStore.Page {
+        guard let pending = inFlight[conversationId], !pending.isEmpty else { return stored }
+        let known = Set(stored.messages.compactMap(\.id))
+        let extra = pending.filter { $0.id.map { !known.contains($0) } ?? true }
+        guard !extra.isEmpty else { return stored }
+        return .init(messages: stored.messages + extra, olderCursor: stored.olderCursor)
+    }
+
+    private func drop(_ message: ImMessage, from conversationId: String) {
+        inFlight[conversationId]?.removeAll { $0.id == message.id }
+        if inFlight[conversationId]?.isEmpty == true { inFlight[conversationId] = nil }
+    }
+
+    /// Send what is in the box.
+    ///
+    /// **The bubble is put up before the send is attempted.** Naming the
+    /// message here rather than letting ``ChatService/sendText`` name it
+    /// is what makes that safe: the row the store writes carries the
+    /// same id, so `openSelected` replaces the optimistic copy instead
+    /// of drawing the message twice. Until then it shows as Queued,
+    /// which is what it is — and what the stored row will say too, until
+    /// the drain turns it into Sent.
+    ///
+    /// A send that never reaches the store takes its bubble back down
+    /// and returns the text to the box, so a failed key fetch costs the
+    /// user a click and not what they wrote.
+    private func send(in conversation: Conversation) {
+        let text = draft.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard verdict.canSend, !text.isEmpty else { return }
+        sendError = nil
+
+        if let target = editing, target.conversationId == conversation.id {
+            sendEdit(target, text: text, in: conversation)
+            return
+        }
+
+        var optimistic = ImMessage.text(
+            type: conversation.type,
+            from: session.liveFid,
+            to: conversation.targetId,
+            text
+        )
+        optimistic.setId(fudpId: ImMessage.newFudpId())
+        let shown = optimistic
+
+        drafts[conversation.id] = ""
+        inFlight[conversation.id, default: []].append(shown)
+        page = withInFlight(page, of: conversation.id)
+
+        Task {
+            do {
+                let keys = try await sendKeys(for: conversation)
+                _ = try session.chat.send(
+                    shown, in: conversation, as: session.liveFid, keys: keys
+                )
+                await MainActor.run {
+                    drop(shown, from: conversation.id)
+                    openSelected()
+                }
+                // Try to move it straight away; if that fails it stays
+                // queued and the next send-and-receive picks it up.
+                _ = try? await session.courier.drainOutbox(as: session.liveFid)
+                await MainActor.run { openSelected() }
+            } catch {
+                await MainActor.run {
+                    drop(shown, from: conversation.id)
+                    if drafts[conversation.id]?.isEmpty ?? true { drafts[conversation.id] = text }
+                    sendError = String(describing: error)
+                    openSelected()
+                }
+            }
+        }
+    }
+
+    // MARK: - edit / withdraw
+
+    /// What the composer is editing: which message, where, and the draft
+    /// it put aside to do so.
+    struct EditTarget: Equatable {
+        let message: ImMessage
+        let conversationId: String
+        let draftBefore: String
+    }
+
+    private func beginEdit(_ message: ImMessage, in conversation: Conversation) {
+        let before = editing?.conversationId == conversation.id
+            ? editing?.draftBefore ?? "" : drafts[conversation.id] ?? ""
+        if let previous = editing, previous.conversationId != conversation.id {
+            drafts[previous.conversationId] = previous.draftBefore
+        }
+        editing = EditTarget(message: message, conversationId: conversation.id, draftBefore: before)
+        drafts[conversation.id] = message.content ?? ""
+    }
+
+    /// Leave edit mode and put the displaced draft back.
+    private func endEdit() {
+        guard let target = editing else { return }
+        drafts[target.conversationId] = target.draftBefore
+        editing = nil
+    }
+
+    private func editBanner(_ target: EditTarget) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "pencil")
+                .foregroundStyle(style.tint)
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Editing message")
+                    .font(.caption)
+                    .foregroundStyle(style.tint)
+                Text(target.message.content ?? "")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+            Spacer()
+            Button { endEdit() } label: { Image(systemName: "xmark.circle.fill") }
+                .buttonStyle(.borderless)
+                .help("Cancel editing")
+                .keyboardShortcut(.cancelAction)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(RoundedRectangle(cornerRadius: 8).fill(style.tint.opacity(0.08)))
+    }
+
+    private func sendEdit(_ target: EditTarget, text: String, in conversation: Conversation) {
+        guard let id = target.message.id else { return }
+        endEdit()
+        Task {
+            do {
+                let keys = try await sendKeys(for: conversation)
+                _ = try session.chat.edit(id, in: conversation, to: text, as: session.liveFid, keys: keys)
+                await MainActor.run { openSelected() }
+                _ = try? await session.courier.drainOutbox(as: session.liveFid)
+                await MainActor.run { openSelected() }
+            } catch {
+                await MainActor.run {
+                    sendError = String(describing: error)
+                    openSelected()
+                }
+            }
+        }
+    }
+
+    /// Delete the DOCK item where it is ours to delete, then send the
+    /// notice. The window is judged when the user said yes, so a slow
+    /// DOCK cannot run them out of it.
+    private func withdraw(_ message: ImMessage, in conversation: Conversation) {
+        guard let id = message.id else { return }
+        let askedAt = Date()
+        if editing?.message.id == id { endEdit() }
+        sendError = nil
+        Task {
+            do {
+                // The row on screen may predate the delivery that named its DOCK item.
+                let current = try session.messages.get(messageId: id, in: conversation.id) ?? message
+                if let url = current.dockUrl, let dockId = current.dockId {
+                    _ = await session.courier.deleteOwnItem(dockUrl: url, dockId: dockId)
+                }
+                let keys = try await sendKeys(for: conversation)
+                _ = try session.chat.withdraw(
+                    id, in: conversation, as: session.liveFid, keys: keys, checkedAt: askedAt
+                )
+                await MainActor.run { openSelected() }
+                _ = try? await session.courier.drainOutbox(as: session.liveFid)
+                await MainActor.run { openSelected() }
+            } catch {
+                await MainActor.run {
+                    sendError = String(describing: error)
+                    openSelected()
+                }
+            }
+        }
+    }
+
+    /// Stop recording and send what was captured.
+    ///
+    /// **Which way it travels is decided here, by size.** The DOCK's
+    /// per-item ceiling is 64 KB by default and each operator may
+    /// advertise less, so a note that fits goes inside the message and
+    /// one that does not takes the same DISK-and-HAT road a shared file
+    /// takes. Asking the courier for the destination's real budget is
+    /// the point: an app-side constant asserting a server limit it never
+    /// read is exactly the bug the wire-format work was cleaning up.
+    ///
+    /// The temp file is deleted only on the inline path. The HAT path
+    /// shares it *by reference*, so those bytes have to stay.
+    private func sendVoice(in conversation: Conversation) {
+        guard let recording = recorder.finish() else { return }
+        sendError = nil
+        sendingVoice = true
+        Task {
+            do {
+                let keys = try await sendKeys(for: conversation)
+                let budget = await session.courier.itemBudget(
+                    forTarget: conversation.targetId, type: conversation.type
+                )
+                let inline = VoiceNote.fitsInline(audioBytes: recording.data.count, budget: budget)
+                let message: ImMessage
+                if inline {
+                    message = VoiceNote.message(
+                        type: conversation.type,
+                        from: session.liveFid,
+                        to: conversation.targetId,
+                        audio: recording.data,
+                        durationMs: recording.durationMs,
+                        sampleRate: recording.sampleRate
+                    )
+                } else {
+                    let pubkey = try Secp256k1.publicKey(fromPrivateKey: try session.livePrikey())
+                    message = try await session.fileShare.share(
+                        fileAt: recording.url,
+                        in: conversation,
+                        as: session.liveFid,
+                        ownPubkey: pubkey,
+                        desc: "Voice note, \(VoiceNote.formatDuration(recording.durationMs))",
+                        progress: { sent, total in
+                            Task { @MainActor in attachProgress = (sent, total) }
+                        }
+                    )
+                }
+                _ = try session.chat.send(
+                    message, in: conversation, as: session.liveFid, keys: keys
+                )
+                if inline { try? FileManager.default.removeItem(at: recording.url) }
+                _ = try? await session.courier.drainOutbox(as: session.liveFid)
+                await MainActor.run {
+                    sendingVoice = false
+                    attachProgress = nil
+                    openSelected()
+                }
+            } catch {
+                await MainActor.run {
+                    sendingVoice = false
+                    attachProgress = nil
+                    sendError = String(describing: error)
+                }
+            }
+        }
+    }
+
+    /// P2P needs our privkey and their pubkey; a group needs neither,
+    /// because its key is in ``SymkeyStore``.
+    private func sendKeys(for conversation: Conversation) async throws -> ChatService.Keys {
+        guard conversation.type == .p2p else { return .none }
+        let privkey = try session.livePrikey()
+        if let cached = pubkeys[conversation.targetId] {
+            return .init(privkey: privkey, recipientPubkey: cached)
+        }
+        let quote = try await session.quoteMail(to: conversation.targetId)
+        guard let pubkey = quote.recipientPubkey else {
+            throw ChatService.Failure.noRecipientKey(conversation.targetId)
+        }
+        await MainActor.run { pubkeys[conversation.targetId] = pubkey }
+        return .init(privkey: privkey, recipientPubkey: pubkey)
+    }
+
+    /// Pick a file, upload it, and send the reference.
+    ///
+    /// The upload happens *before* the send, so a failed upload leaves
+    /// nothing queued — the alternative is a message pointing at bytes
+    /// that never arrived.
+    private func attach(in conversation: Conversation) {
+        Task { @MainActor in
+            let panel = NSOpenPanel()
+            panel.allowsMultipleSelection = false
+            panel.canChooseDirectories = false
+            guard await panel.runModal() == .OK, let url = panel.url else { return }
+
+            attaching = true
+            sendError = nil
+            Task {
+                do {
+                    let pubkey = try Secp256k1.publicKey(fromPrivateKey: try session.livePrikey())
+                    let message = try await session.fileShare.share(
+                        fileAt: url,
+                        in: conversation,
+                        as: session.liveFid,
+                        ownPubkey: pubkey,
+                        progress: { sent, total in
+                            Task { @MainActor in attachProgress = (sent, total) }
+                        }
+                    )
+                    let keys = try await sendKeys(for: conversation)
+                    _ = try session.chat.send(
+                        message, in: conversation, as: session.liveFid, keys: keys
+                    )
+                    _ = try? await session.courier.drainOutbox(as: session.liveFid)
+                    await MainActor.run {
+                        attaching = false
+                        attachProgress = nil
+                        openSelected()
+                    }
+                } catch {
+                    await MainActor.run {
+                        attaching = false
+                        attachProgress = nil
+                        sendError = String(describing: error)
+                    }
+                }
+            }
+        }
+    }
+
+    /// Fetch a chat file, reporting on its own card rather than the
+    /// composer's error line — with several files in a thread, a shared
+    /// error cannot say which one failed.
+    private func download(_ message: ImMessage) {
+        guard let hatId = session.fileShare.offer(in: message)?.hatId else { return }
+        if case .running = downloads[hatId] { return }
+        downloads[hatId] = .running(received: 0)
+        Task {
+            do {
+                _ = try await session.fileShare.download(message, progress: { received in
+                    Task { @MainActor in
+                        // A tick queued behind the finish must not bring
+                        // a done or failed card back to "downloading".
+                        if case .running = downloads[hatId] {
+                            downloads[hatId] = .running(received: received)
+                        }
+                    }
+                })
+                await MainActor.run {
+                    downloads[hatId] = nil
+                    openSelected()
+                }
+            } catch {
+                await MainActor.run { downloads[hatId] = .failed(String(describing: error)) }
+            }
+        }
+    }
+
+    /// The owner's way out of ``ChatGate/Verdict/ownerNeedsKey``: make a
+    /// key and give it to the members.
+    ///
+    /// **Rotating rather than generating a first key** is deliberate and
+    /// costs nothing: ``SymkeyStore/rotate(for:now:)`` takes the next
+    /// version up, which is version 1 when there is nothing there. An
+    /// owner reaching this button on a room that *did* have a key — one
+    /// this device lost, say — must not reuse that version number, since
+    /// two different keys under one version is the one state the store
+    /// cannot represent.
+    ///
+    /// A room's members get the new key in a `ROOM_INFO`, which is the
+    /// envelope that already carries a membership and a key together. A
+    /// team's get a plain SYMKEY message, because a team's membership
+    /// comes from the chain and is not ours to announce.
+    private func generateKey(for conversation: Conversation) {
+        sendError = nil
+        do {
+            let outbound: [ImMessage]
+            let version: Int64
+            let skipped: Int
+            switch conversation.type {
+            case .room:
+                let service = try session.roomService
+                let keyed = try service.resetSymkey(
+                    conversation.targetId,
+                    as: session.liveFid,
+                    pubkeys: { fid in try session.knownPubkey(of: fid) }
+                )
+                outbound = keyed.outbound
+                version = keyed.version
+                // A room's membership is the owner's own copy and every
+                // row of it is invited, so there is nothing to skip.
+                skipped = 0
+
+            case .team:
+                // Through the service, not straight at the store: the
+                // owner-only rule is the whole security of a group key,
+                // and a rule enforced by whether a menu item was drawn
+                // is not enforced at all.
+                let keyed = try session.teamKeys.resetSymkey(
+                    for: conversation.targetId,
+                    as: session.liveFid,
+                    pubkeys: { fid in try session.knownPubkey(of: fid) },
+                    homes: { fid in try session.knownHome(of: fid) }
+                )
+                outbound = keyed.outbound
+                version = keyed.version
+                skipped = keyed.skipped.count
+                // The rotation a "members left" reminder asks for. The next
+                // sync would clear it too, from the version; this saves the wait.
+                _ = try? session.keyRotations.remove(teamId: conversation.targetId)
+
+            case .p2p, .square:
+                // Neither has a group key: a P2P body is sealed to the
+                // person, and a square has no membership to keep anyone
+                // out of. `ChatGate` never asks for one here.
+                return
+            }
+
+            // Key traffic is P2P, so it queues into each recipient's own
+            // thread and travels like any other message.
+            for message in outbound {
+                guard let to = message.targetId else { continue }
+                try session.outbox.enqueue(message, in: Conversation.id(type: .p2p, targetId: to))
+            }
+            reload()
+            openSelected()
+            // The version is in the line because a reset is repeatable:
+            // two resets a minute apart read identically without it, and
+            // "nothing happened" is the reading it invites.
+            syncSummary = outbound.isEmpty
+                ? "A new symkey was created (\(SymkeyVersionText.inTable(version))). No member could be sealed to — share it from the members list once their pubkeys are known."
+                : "A new symkey was created (\(SymkeyVersionText.inTable(version))); \(outbound.count) share(s) queued."
+                    + (skipped > 0 ? " \(skipped) member(s) skipped — no pubkey or no DOCK yet." : "")
+            Task { _ = try? await session.courier.drainOutbox(as: session.liveFid) }
+        } catch {
+            sendError = String(describing: error)
+        }
+    }
+
+    // MARK: - menu actions
+
+    /// Which consensus document to read, and where to look for it.
+    private struct ConsensusRead: Identifiable {
+        let id = UUID()
+        /// What the sheet is about — the team's name, not the
+        /// document's. A consensus document has no title of its own.
+        let title: String
+        let consensusId: String
+        let diskSids: [String]
+    }
+
+    /// Open a team's consensus document, read-only.
+    ///
+    /// Read-only for the owner too: replacing the text is a carve, and
+    /// carving is what ``GroupSettingsSheet`` is for. The DISK comes
+    /// from the team's `home` map rather than from anything typed here,
+    /// which is the whole distribution mechanism — a member who can
+    /// resolve the team can fetch the bytes and check them against the
+    /// id without being told anything out of band. An empty list is not
+    /// a failure to look: it means the team publishes no DISK, and the
+    /// sheet says so rather than blaming the network.
+    private func readConsensus(_ conversation: Conversation, team: Team?) {
+        readingConsensus = ConsensusRead(
+            title: "\(ChatFormat.title(of: conversation))'s consensus",
+            consensusId: team?.consensusId ?? "",
+            diskSids: [TeamConsensus.diskSid(of: team)].compactMap { $0 }
+        )
+    }
+
+    /// Close a room we own. The keys are **kept**: this ends the
+    /// conversation, it does not burn the transcript.
+    private func disband(_ conversation: Conversation) {
+        sendError = nil
+        do {
+            let outbound = try session.roomService.disband(
+                conversation.targetId, as: session.liveFid
+            )
+            try queue(outbound)
+            _ = try session.conversations.mutate(id: conversation.id) { $0.leftGroup = true }
+            reload()
+            openSelected()
+        } catch {
+            sendError = String(describing: error)
+        }
+    }
+
+    /// Disband a team this identity owns.
+    ///
+    /// The thread is flagged at once rather than at the next sync,
+    /// because the sync will never flag it: a disbanded team keeps its
+    /// members, and it is `active` that goes false. Keys and transcript
+    /// stay, as for a closed room.
+    /// Whether the live FID is the selected team's owner's master — the
+    /// one non-owner the chain lets hand a team over. Asked only for a
+    /// team someone else owns, and answered from the owner's chain record.
+    private func checkMasterOfSelectedTeam() async {
+        guard let conversation = selected, conversation.type == .team,
+              let team = (try? session.teams.get(id: conversation.targetId)) ?? nil,
+              !team.isOwner(session.liveFid), team.isActive
+        else { return }
+        // Keyed by identity as well: the answer is about the live FID.
+        let id = session.liveFid + "|" + conversation.targetId
+        let authority = try? await session.teamTransferAuthority(team)
+        if authority == .ownersMaster {
+            masterOfOwner.insert(id)
+        } else {
+            masterOfOwner.remove(id)
+        }
+    }
+
+    private func disbandTeam(_ conversation: Conversation) {
+        confirmDisband = nil
+        sendError = nil
+        Task {
+            do {
+                let txid = try await session.carveTeamDisbandOnChain(teamIds: [conversation.targetId])
+                await MainActor.run {
+                    _ = try? session.conversations.mutate(id: conversation.id) { $0.leftGroup = true }
+                    syncSummary = "Broadcast — tx \(txid.elidingMiddle(head: 8, tail: 8)). The team is gone for everyone once it confirms."
+                    reload()
+                    openSelected()
+                }
+                await session.refreshDockRegistry()
+            } catch {
+                await MainActor.run { sendError = String(describing: error) }
+            }
+        }
+    }
+
+    /// Leave. A room is local and takes effect at once; a team or a
+    /// square is a carve, and until it confirms the chain still says we
+    /// are in it.
+    private func leave(_ conversation: Conversation) {
+        sendError = nil
+        Task {
+            do {
+                switch conversation.type {
+                case .room:
+                    if let notice = try session.roomService.leave(
+                        conversation.targetId, as: session.liveFid
+                    ) {
+                        try queue([notice])
+                    }
+                    await MainActor.run { syncSummary = "Left. The owner is told on the next send." }
+                case .team:
+                    let txid = try await session.carveTeamLeaveOnChain(
+                        teamIds: [conversation.targetId]
+                    )
+                    await MainActor.run {
+                        syncSummary = "Broadcast — tx \(txid.elidingMiddle(head: 8, tail: 8)). You are out once it confirms."
+                    }
+                case .square:
+                    let txid = try await session.carveSquareLeaveOnChain(
+                        squareIds: [conversation.targetId]
+                    )
+                    await MainActor.run {
+                        syncSummary = "Broadcast — tx \(txid.elidingMiddle(head: 8, tail: 8)). You are out once it confirms."
+                    }
+                case .p2p:
+                    return
+                }
+                await MainActor.run {
+                    // The transcript stays either way: we were there,
+                    // and the history is ours.
+                    _ = try? session.conversations.mutate(id: conversation.id) { $0.leftGroup = true }
+                    reload()
+                    openSelected()
+                }
+            } catch {
+                await MainActor.run { sendError = String(describing: error) }
+            }
+        }
+    }
+
+    /// Block a P2P correspondent: nothing more from them is kept, and
+    /// the thread they had goes with it.
+    private func block(_ conversation: Conversation) {
+        sendError = nil
+        do {
+            try session.contactPolicy.mutate(liveFid: session.liveFid) {
+                $0.block(conversation.targetId)
+            }
+            removeThread(conversation)
+        } catch {
+            sendError = String(describing: error)
+        }
+    }
+
+    /// Delete a thread and everything under it — the left list's
+    /// `Delete`, and the one action in this pane that destroys something
+    /// no other device is holding for us.
+    ///
+    /// **A room is deleted whole**: the record and its keys go with the
+    /// transcript, because a room exists nowhere but on the devices that
+    /// hold it and leaving a keyed, memberless shell behind would be a
+    /// row that can neither be read nor rejoined. A team or a square
+    /// keeps its record — that one is the chain's, not ours, and the
+    /// next sync would only fetch it again.
+    ///
+    /// **Nobody is told.** Deleting is not leaving and not disbanding:
+    /// those are separate items in the same menu, and the dialog on the
+    /// way in says which one the user probably wanted.
+    private func delete(_ conversation: Conversation) {
+        sendError = nil
+        confirmDelete = nil
+        do {
+            // The room record goes first, so a failure here leaves the
+            // transcript intact rather than half-deleted. A bare
+            // service, not `session.roomService`: forgetting needs no
+            // identity key — only *opening* a shared room key does — and
+            // a read-only session must still be able to delete a room.
+            if conversation.type == .room {
+                try RoomService(
+                    rooms: session.rooms, symkeys: session.symkeys,
+                    keyLedger: session.keyLedger
+                )
+                .forget(conversation.targetId)
+                _ = try? session.roomInvites.remove(roomId: conversation.targetId)
+            }
+            _ = try session.messages.deleteConversation(conversation.id)
+            _ = try session.conversations.remove(id: conversation.id)
+            if selection[mode] == conversation.id { selection[mode] = nil }
+            drafts[conversation.id] = nil
+            reload()
+            if selection[mode] == nil { selection[mode] = conversations.first?.id }
+            openSelected()
+        } catch {
+            sendError = String(describing: error)
+        }
+    }
+
+    /// Forget a thread on this device. The messages go with it — there
+    /// is no copy anywhere else, which the alert on the way in has to
+    /// say and this comment records for whoever writes it.
+    private func removeThread(_ conversation: Conversation) {
+        sendError = nil
+        do {
+            _ = try session.messages.deleteConversation(conversation.id)
+            _ = try session.conversations.remove(id: conversation.id)
+            selection[mode] = nil
+            reload()
+            openSelected()
+        } catch {
+            sendError = String(describing: error)
+        }
+    }
+
+    private func accept(_ invite: RoomInvite) {
+        sendError = nil
+        do {
+            let (_, reply) = try session.roomService.acceptInvite(
+                roomInfoJson: invite.roomInfoJson, as: session.liveFid
+            )
+            if let reply { try queue([reply]) }
+            _ = try session.roomInvites.remove(roomId: invite.roomId)
+            // Opens the thread. Without it the room is on this device and
+            // nowhere on screen — the invitation is gone, and the room
+            // surfaces only once somebody says something in it.
+            try session.roomConversations.sync(invite.roomId)
+            reload()
+            selection[.room] = Conversation.id(type: .room, targetId: invite.roomId)
+            openSelected()
+        } catch {
+            sendError = String(describing: error)
+        }
+    }
+
+    private func decline(_ invite: RoomInvite) {
+        sendError = nil
+        do {
+            if let reply = try session.roomService.rejectInvite(
+                roomInfoJson: invite.roomInfoJson, as: session.liveFid
+            ) {
+                try queue([reply])
+            }
+            _ = try session.roomInvites.remove(roomId: invite.roomId)
+            reload()
+        } catch {
+            sendError = String(describing: error)
+        }
+    }
+
+    /// Hand over the history an ask named. The user has already seen
+    /// what goes and to whom — see ``shareHistoryMessage(_:)``.
+    private func approveHistory(_ request: IncomingHistoryRequest) {
+        confirmShareHistory = nil
+        sendError = nil
+        sharingHistory = request.id
+        Task {
+            do {
+                let privkey = try session.livePrikey()
+                guard let pubkey = await session.resolvePubkey(of: request.from) else {
+                    throw ChatService.Failure.noRecipientKey(request.from)
+                }
+                let count = try await session.historyShare.approve(
+                    request, as: session.liveFid, privkey: privkey, requesterPubkey: pubkey
+                )
+                _ = try? await session.courier.drainOutbox(as: session.liveFid)
+                await MainActor.run {
+                    sharingHistory = nil
+                    syncSummary = "Shared \(count) message\(count == 1 ? "" : "s") with \(request.from.elidingMiddle(head: 6, tail: 6))."
+                    reload()
+                }
+            } catch {
+                await MainActor.run {
+                    sharingHistory = nil
+                    sendError = String(describing: error)
+                    reload()
+                }
+            }
+        }
+    }
+
+    private func declineHistory(_ request: IncomingHistoryRequest) {
+        sendError = nil
+        do {
+            try session.historyShare.decline(request)
+            reload()
+        } catch {
+            sendError = String(describing: error)
+        }
+    }
+
+    private func retryHistoryImport(_ share: ReceivedHistoryShare) {
+        sendError = nil
+        Task {
+            let results = await session.historyShare.importReceived(
+                as: session.liveFid, retrying: share.nonce
+            )
+            await MainActor.run {
+                if let result = results.first(where: { $0.nonce == share.nonce }) {
+                    if let count = result.imported {
+                        syncSummary = "Imported \(count) message\(count == 1 ? "" : "s") from history."
+                    } else {
+                        sendError = result.error
+                    }
+                }
+                reload()
+                openSelected()
+            }
+        }
+    }
+
+    private func dismissHistoryImport(_ share: ReceivedHistoryShare) {
+        do {
+            try session.historyShare.dismiss(share)
+            reload()
+        } catch {
+            sendError = String(describing: error)
+        }
+    }
+
+    /// Room control traffic is P2P, so it queues into each recipient's
+    /// own thread — an invitation has to reach someone not yet in the
+    /// room, and a removal someone no longer in it.
+    private func queue(_ outbound: [ImMessage]) throws {
+        for message in outbound {
+            guard let to = message.targetId else { continue }
+            try session.outbox.enqueue(message, in: Conversation.id(type: .p2p, targetId: to))
+        }
+        Task { _ = try? await session.courier.drainOutbox(as: session.liveFid) }
+    }
+
+    /// Put the open conversation's DOCK on the poller's fast lane.
+    ///
+    /// A P2P thread resolves to our *own* server — their messages to us
+    /// rest there, not on theirs — so switching between P2P threads
+    /// keeps the same fast lane rather than churning it.
+    private func updatePriorityDock() {
+        guard let conversation = selected else {
+            appState.setPriorityDock(nil)
+            return
+        }
+        Task {
+            let url = await session.dockRegistry.dockUrl(
+                forTarget: conversation.targetId, type: conversation.type
+            )
+            await MainActor.run { appState.setPriorityDock(url) }
+        }
+    }
+
+    /// One round of delivery in both directions.
+    private func exchange() async {
+        await MainActor.run { delivering = true; sendError = nil }
+        var parts: [String] = []
+        do {
+            // Which DOCK each group sits on can have changed since the
+            // last pass — a group joined, left, or moved — and the
+            // registry is what the collect polls.
+            await session.refreshDockRegistry()
+            let sent = try await session.courier.drainOutbox(as: session.liveFid)
+            let received = try await session.courier.collect(
+                as: session.liveFid,
+                privkey: try? session.livePrikey()
+            )
+            if sent.attempted > 0 {
+                parts.append("sent \(sent.sent)/\(sent.attempted)")
+            }
+            if sent.failed > 0 { parts.append("\(sent.failed) failed") }
+            parts.append("received \(received.filed)")
+            if received.sealed > 0 { parts.append("\(received.sealed) need a key") }
+            let imported = await session.historyShare.importReceived(as: session.liveFid)
+            let filed = imported.compactMap(\.imported).reduce(0, +)
+            if filed > 0 { parts.append("\(filed) imported from history") }
+        } catch {
+            await MainActor.run { sendError = String(describing: error) }
+        }
+        await MainActor.run {
+            delivering = false
+            syncSummary = parts.isEmpty ? nil : parts.joined(separator: " · ")
+            reload()
+            openSelected()
+        }
+    }
+
+    /// Reconcile the team invitations and outstanding agreements against
+    /// the chain, then repaint the banners and badges built from them.
+    ///
+    /// Runs on opening the pane and on switching to the Team tab, not
+    /// only from Refresh: those rows are what the tab badge and the
+    /// Overview tile count, and until this was here the only thing that
+    /// could correct them was a button in this one tab. The session
+    /// throttles the chain query, so switching tabs about does not pay
+    /// for it each time.
+    private func refreshTeamAnswers() {
+        guard mode == .team else { return }
+        Task {
+            await session.refreshTeamAnswers()
+            await MainActor.run { reload() }
+        }
+    }
+
+    private func syncGroups() async {
+        await MainActor.run { syncing = true; syncSummary = nil }
+        var parts: [String] = []
+        do {
+            let teams = try await session.groups.syncTeams(
+                fid: session.liveFid, into: session.teams,
+                conversations: session.conversations,
+                // What tells a member their team's consensus changed
+                // under them. Nothing is sent to say so — the chain
+                // lists them in `notAgreeMembers` and this is where we
+                // read it, on every refresh, so the prompt also clears
+                // itself when the signature came from another device.
+                signatures: session.consensusSignatures,
+                // And what tells an owner a key is due: members left, by
+                // their own `leave` or a manager's `dismiss` (FIMP4V3 §3.3).
+                rotations: session.keyRotations, symkeys: session.symkeys
+            )
+            let squares = try await session.groups.syncSquares(
+                fid: session.liveFid, into: session.squares, conversations: session.conversations
+            )
+            // Counted from the store rather than the fetch: the team
+            // query also returns teams we have left or been dismissed
+            // from, which is how we learn that, and they are not ours.
+            let inTeams = (try? session.teams.joined(by: session.liveFid).count) ?? teams.total
+            parts.append("\(inTeams) team(s), \(squares.total) square(s)")
+            if teams.joined + squares.joined > 0 {
+                parts.append("\(teams.joined + squares.joined) new")
+            }
+            if teams.left + squares.left > 0 {
+                parts.append("\(teams.left + squares.left) left")
+            }
+            if teams.awaitingSignature > 0 {
+                parts.append("\(teams.awaitingSignature) awaiting your agreement")
+            }
+            if teams.rotationsDue > 0 {
+                parts.append("\(teams.rotationsDue) team key(s) due a rotation")
+            }
+            // Invitations are not in the member sync — we are not a member
+            // yet — so they are a query of their own. A failure here is a
+            // line in the summary, not a failed refresh.
+            do {
+                let offers = try await session.refreshTeamOffers()
+                if offers > 0 { parts.append("\(offers) new team invitation(s)") }
+            } catch {
+                parts.append("invitations not checked: \(error)")
+            }
+            if let keyed = keyOwnedTeams() { parts.append(keyed) }
+        } catch {
+            parts = ["sync failed: \(error)"]
+        }
+        // A group we just joined lives on its own DOCK, and until the
+        // registry knows about it nothing that group says is collected.
+        await session.refreshDockRegistry()
+        await MainActor.run {
+            syncing = false
+            syncSummary = parts.joined(separator: " · ")
+            reload()
+        }
+    }
+
+    /// Give every team we own its first key, and hand it round.
+    ///
+    /// **This is where "a new team gets a key" happens, and it has to
+    /// be here.** Creating a team is a transaction whose id is the
+    /// carve's own txid, so at the moment the user presses Create there
+    /// is no team to key — it does not exist until the carve confirms
+    /// and this sync finds it. The first sync that shows us a team we
+    /// own without a key is the earliest point where minting one is even
+    /// well-defined.
+    ///
+    /// Running on *every* sync is safe and deliberate:
+    /// ``TeamKeyService/ensureSymkey(for:as:pubkeys:homes:now:)`` is
+    /// idempotent, so a team that already has a key gets nothing. A
+    /// rotation stays a deliberate act.
+    ///
+    /// Returns a line for the sync summary, or nil when nothing was
+    /// minted — which is the ordinary case.
+    private func keyOwnedTeams() -> String? {
+        var minted = 0
+        var shares: [ImMessage] = []
+        for team in (try? session.teams.owned(by: session.liveFid)) ?? [] {
+            guard let id = team.id, team.isActive else { continue }
+            guard let keyed = try? session.teamKeys.ensureSymkey(
+                for: id,
+                as: session.liveFid,
+                pubkeys: { fid in try session.knownPubkey(of: fid) },
+                homes: { fid in try session.knownHome(of: fid) }
+            ), keyed.created else { continue }
+            minted += 1
+            shares += keyed.outbound
+        }
+        guard minted > 0 else { return nil }
+        try? queue(shares)
+        return "keyed \(minted) team(s), \(shares.count) share(s) queued"
+    }
+
+    // MARK: - carves waiting for the chain
+
+    /// Creates, joins and take-overs that were paid for and have not
+    /// shown up yet. Each row names the transaction, so "nothing
+    /// happened" can be checked rather than wondered about.
+    private var pendingBanner: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(pending[mode] ?? []) { row in
+                let overdue = row.isOverdue(now: Date())
+                HStack(spacing: 8) {
+                    if overdue {
+                        Image(systemName: "exclamationmark.triangle").foregroundStyle(.orange)
+                    } else {
+                        ProgressView().controlSize(.small)
+                    }
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(pendingTitle(row))
+                        Text(overdue
+                             ? "Not on the chain after a day — the transaction may have failed or been rejected. Check it, then dismiss this."
+                             : row.type == .square && row.act == .join
+                                ? "Waiting for the chain. You can read the square now, and send once the join confirms."
+                                : "Waiting for the chain. It appears here once it confirms and you refresh.")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    CopyableText(
+                        display: "tx " + row.txid.elidingMiddle(head: 6, tail: 6),
+                        copy: row.txid,
+                        font: .system(.caption2, design: .monospaced)
+                    )
+                    .foregroundStyle(.tertiary)
+                    Button("Dismiss") {
+                        _ = try? session.pendingGroups.remove(row)
+                        reload()
+                    }
+                    .buttonStyle(.borderless)
+                    .font(.caption)
+                }
+                .font(.callout)
+                .padding(8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(RoundedRectangle(cornerRadius: 8).fill(style.tint.opacity(0.08)))
+            }
+        }
+    }
+
+    private func pendingTitle(_ row: PendingGroup) -> String {
+        let name = row.name ?? row.groupId.elidingMiddle(head: 6, tail: 6)
+        switch row.act {
+        case .create: return "Creating \(name)"
+        case .join: return "Joining \(name)"
+        case .takeOver: return "Taking over \(name)"
+        }
+    }
+
+    // MARK: - DOCKs that refuse
+
+    /// Which groups' DOCKs are refusing, as the registry last saw it.
+    private func refreshUnreachable() {
+        Task {
+            var found: [ImType: Set<String>] = [:]
+            for type in [ImType.team, .square, .room] {
+                found[type] = await session.dockRegistry.failingTargetIds(type: type)
+            }
+            await MainActor.run { unreachable = found }
+        }
+    }
+
+    /// Try this tab's refusing DOCKs again now — Android does it every
+    /// time a group list opens — and collect if any came back.
+    private func retryUnreachable() {
+        guard mode != .p2p else { return }
+        let type = mode
+        Task {
+            let before = await session.dockRegistry.failingTargetIds(type: type)
+            guard !before.isEmpty else { return }
+            let after = await session.dockRegistry.retryFailing(type: type)
+            await MainActor.run {
+                unreachable[type] = after
+                if after.count < before.count { appState.fetchInboxNow() }
+            }
+        }
+    }
+
+    // MARK: - several at once
+
+    /// What the selection can do. Android's rule, kept: your own teams
+    /// and rooms are disbanded or closed, other people's are left, and a
+    /// selection mixing the two is one of each — so it is refused and
+    /// the bar says why, rather than doing half and hiding the rest.
+    enum BulkAction: Identifiable {
+        case leaveSquares([Conversation])
+        case leaveTeams([Conversation])
+        case disbandTeams([Conversation])
+        case leaveRooms([Conversation])
+        case closeRooms([Conversation])
+
+        var id: String { title }
+
+        var threads: [Conversation] {
+            switch self {
+            case .leaveSquares(let c), .leaveTeams(let c), .disbandTeams(let c),
+                 .leaveRooms(let c), .closeRooms(let c):
+                return c
+            }
+        }
+
+        var title: String {
+            let n = threads.count
+            switch self {
+            case .leaveSquares: return "Leave \(n) square\(n == 1 ? "" : "s")?"
+            case .leaveTeams:   return "Leave \(n) team\(n == 1 ? "" : "s")?"
+            case .disbandTeams: return "Disband \(n) team\(n == 1 ? "" : "s")?"
+            case .leaveRooms:   return "Leave \(n) room\(n == 1 ? "" : "s")?"
+            case .closeRooms:   return "Close \(n) room\(n == 1 ? "" : "s")?"
+            }
+        }
+
+        var confirm: String {
+            switch self {
+            case .leaveSquares, .leaveTeams: return "Leave (broadcast one carve)"
+            case .disbandTeams: return "Disband (broadcast one carve)"
+            case .leaveRooms: return "Leave"
+            case .closeRooms: return "Close"
+            }
+        }
+
+        var message: String {
+            switch self {
+            case .leaveSquares, .leaveTeams:
+                return "One transaction leaves them all: one miner fee, public on the chain. You are still in until it confirms. The transcripts stay on this device."
+            case .disbandTeams:
+                return "One transaction disbands them all, and it cannot be undone: each team stops for every member. It costs a miner fee and is public. Transcripts and keys stay on this device."
+            case .leaveRooms:
+                return "Each owner is told, and only they can let you back in. The transcripts stay on this device."
+            case .closeRooms:
+                return "Every member of each room is told, and nobody can speak in them again. Transcripts and keys stay on this device."
+            }
+        }
+    }
+
+    private var checkedThreads: [Conversation] {
+        guard let checked else { return [] }
+        return conversations.filter { checked.contains($0.id) && $0.leftGroup != true }
+    }
+
+    /// The one action the selection allows, or the reason it allows none.
+    private var bulkChoice: (action: BulkAction?, reason: String?) {
+        let chosen = checkedThreads
+        guard !chosen.isEmpty else { return (nil, nil) }
+        switch mode {
+        case .square:
+            return (.leaveSquares(chosen), nil)
+        case .team, .room:
+            let owned = chosen.filter { session.chatGateFacts(for: $0).isOwner }
+            if owned.isEmpty {
+                return (mode == .team ? .leaveTeams(chosen) : .leaveRooms(chosen), nil)
+            }
+            if owned.count == chosen.count {
+                return (mode == .team ? .disbandTeams(chosen) : .closeRooms(chosen), nil)
+            }
+            return (nil, "Your own \(style.title.lowercased()) can't be left, only \(mode == .team ? "disbanded" : "closed") — select them apart from the others.")
+        case .p2p:
+            return (nil, nil)
+        }
+    }
+
+    private var selectionBar: some View {
+        let choice = bulkChoice
+        let count = checkedThreads.count
+        return HStack(spacing: 10) {
+            Text("\(count) selected").font(.callout.bold())
+            if let reason = choice.reason {
+                Text(reason).font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button(count == conversations.filter { $0.leftGroup != true }.count ? "Select none" : "Select all") {
+                let open = Set(conversations.filter { $0.leftGroup != true }.map(\.id))
+                checked = (checked ?? []).isSuperset(of: open) ? [] : open
+            }
+            .buttonStyle(.borderless)
+            .font(.caption)
+            if let action = choice.action {
+                Button(action.confirm.components(separatedBy: " (").first ?? action.confirm, role: .destructive) {
+                    confirmBulk = action
+                }
+                .disabled(!session.canSign)
+            }
+            Button("Cancel") { checked = nil }
+        }
+        .padding(8)
+        .background(RoundedRectangle(cornerRadius: 8).fill(style.tint.opacity(0.1)))
+    }
+
+    private func perform(_ action: BulkAction) {
+        confirmBulk = nil
+        checked = nil
+        sendError = nil
+        let threads = action.threads
+        let ids = threads.map(\.targetId)
+        Task {
+            do {
+                var summary: String
+                switch action {
+                case .leaveSquares:
+                    let txid = try await session.carveSquareLeaveOnChain(squareIds: ids)
+                    summary = "Broadcast — tx \(txid.elidingMiddle(head: 8, tail: 8)). You are out of \(ids.count) square(s) once it confirms."
+                case .leaveTeams:
+                    let txid = try await session.carveTeamLeaveOnChain(teamIds: ids)
+                    summary = "Broadcast — tx \(txid.elidingMiddle(head: 8, tail: 8)). You are out of \(ids.count) team(s) once it confirms."
+                case .disbandTeams:
+                    let txid = try await session.carveTeamDisbandOnChain(teamIds: ids)
+                    summary = "Broadcast — tx \(txid.elidingMiddle(head: 8, tail: 8)). \(ids.count) team(s) end for everyone once it confirms."
+                case .leaveRooms:
+                    let service = try session.roomService
+                    var notices: [ImMessage] = []
+                    for id in ids {
+                        if let notice = try service.leave(id, as: session.liveFid) { notices.append(notice) }
+                    }
+                    try await MainActor.run { try queue(notices) }
+                    summary = "Left \(ids.count) room(s). Each owner is told on the next send."
+                case .closeRooms:
+                    let service = try session.roomService
+                    var notices: [ImMessage] = []
+                    for id in ids { notices += try service.disband(id, as: session.liveFid) }
+                    try await MainActor.run { try queue(notices) }
+                    summary = "Closed \(ids.count) room(s). \(notices.count) notice(s) queued."
+                }
+                await MainActor.run {
+                    for thread in threads {
+                        _ = try? session.conversations.mutate(id: thread.id) { $0.leftGroup = true }
+                        if thread.type == .room { _ = try? session.roomConversations.sync(thread.targetId) }
+                    }
+                    syncSummary = summary
+                    reload()
+                    openSelected()
+                }
+                await session.refreshDockRegistry()
+            } catch {
+                await MainActor.run { sendError = String(describing: error) }
+            }
+        }
+    }
+
+    // MARK: - chrome helpers
+
+    private func card(@ViewBuilder _ content: () -> some View) -> some View {
+        VStack(alignment: .leading, spacing: 8, content: content)
+            .padding(20)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color(NSColor.controlBackgroundColor))
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+    }
+}

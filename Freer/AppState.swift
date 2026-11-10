@@ -1,0 +1,1715 @@
+import Foundation
+import Observation
+import UIKit
+import FCUI
+import Network
+import FCCore
+import FCDomain
+import FCTransport
+
+/// Top-level UI route. Mutually exclusive screens; navigation happens
+/// by reassigning ``AppState/route``. There is intentionally **no
+/// "first-launch" state** — showing a different screen when the
+/// vault index is empty would leak whether the device has any
+/// vaults at all to a shoulder-surfer.
+enum AppRoute: Equatable {
+    /// Single password field with explicit `Check` and
+    /// `Create new` actions. Default entry point at every launch.
+    case password
+
+    /// Configure is unlocked; pick which main FID to operate as
+    /// (or add a new one).
+    case chooseMain
+
+    /// Form to mint a new main FID inside the unlocked Configure
+    /// (random / hex / WIF / passphrase).
+    case addMain
+
+    /// Fully active session. Show the wallet, contacts, etc.
+    case home
+}
+
+/// Single source of truth for the app shell. Holds:
+///   - the ``ConfigureManager`` (talks to disk)
+///   - an optional ``ConfigureSession`` (post-password; symkey in mem)
+///   - an optional ``ActiveSession`` (post-main-pick; per-main store +
+///     wallet services)
+///   - the ``AppRoute`` driving which view is visible
+///
+/// Children read it via `@Environment(AppState.self)`.
+///
+/// **Live FAPI lifecycle.** When the user saves an FAPI server in
+/// Settings, ``applyFapiSettings(_:)`` builds a real `FudpClient`
+/// wrapped in a `ReconnectingFapiClient` and swaps it into the active
+/// session via `setFapi(_:)`. The previous client (if any) is closed
+/// so its UDP socket is released. Lock-vault / switch-identity tear it
+/// down too.
+///
+/// **Surviving sleep/wake.** A UDP flow does not survive the machine
+/// sleeping, changing network, or idling past its NAT mapping's
+/// lifetime — the socket looks fine and every reply silently vanishes.
+/// So the session holds the reconnecting wrapper, not a bare client,
+/// and ``AppState`` nudges it with `markStale()` on wake and on path
+/// changes; the wrapper reconnects at the next call, by which time the
+/// network is actually back.
+@Observable
+@MainActor
+final class AppState {
+
+    let manager: ConfigureManager
+    private(set) var configureSession: ConfigureSession?
+    private(set) var activeSession: ActiveSession? {
+        // The labels follow the identity; the CIDs in the book do not need to
+        didSet {
+            chatNames.contactLabels = activeSession?.contacts.labels
+            ContactLabels.current = activeSession?.contacts.labels
+        }
+    }
+    /// Calls for the live identity (VOICE_SPEC §10): attached with its poller.
+    let callCenter = CallCenter()
+    @ObservationIgnored private(set) lazy var meetingCenter: MeetingCenter = {
+        let m = MeetingCenter(calls: callCenter)
+        m.meetingDocks = { [weak self] type, id in self?.setMeetingDocks(type: type, id: id) }
+        return m
+    }()
+    /// Who FIDs are — their CIDs — for the chat pane and the meeting
+    /// panel alike. Kept here rather than in the pane because the panel
+    /// floats over every screen, and a meeting's people are the chat's
+    /// people. A CID is the chain's answer, not the identity's, so the
+    /// book survives switching identity.
+    let chatNames = ChatNameBook()
+    /// The call settings sheet (the test relay).
+    var showCallSettings = false
+    /// Keep running in the menu bar with the window closed, so calls and
+    /// meetings still ring (VOICE_SPEC §11.2). Off by default, as on Android.
+    var availableForCalls = UserDefaults.standard.bool(forKey: "availableForCalls") {
+        didSet { UserDefaults.standard.set(availableForCalls, forKey: "availableForCalls") }
+    }
+    /// A call or a meeting is ringing: the window must be on screen to answer it.
+    var somethingRinging: Bool { callCenter.phase == .ringingIn || meetingCenter.ringing != nil }
+    private(set) var configures: [ConfigureRecord]
+
+    /// Bumped every time the active session changes hands — an unlock, a
+    /// lock, a return to the chooser.
+    ///
+    /// **Work that starts under one session and finishes under another
+    /// is the shape of every lifecycle bug on this screen.** An unlock
+    /// that lands after a lock puts the vault back that the user just
+    /// closed; a FAPI connect that returns after teardown publishes a
+    /// live transport into a locked vault; a poller built for one
+    /// identity goes on polling under the next. Re-reading
+    /// ``activeSession`` after an await catches only the first of those,
+    /// because it says *a* session is live, not *which*. So anything
+    /// that suspends captures this number first and checks it after, and
+    /// drops whatever it was carrying when the number has moved.
+    @ObservationIgnored private(set) var sessionGeneration = 0
+
+    /// Retire every operation in flight for the session being put away.
+    /// Called *before* the teardown it belongs to, so that work coming
+    /// back from an await finds the number already moved.
+    private func retireSession() {
+        sessionGeneration &+= 1
+    }
+
+    /// The live session, but only while it is still the one the caller's
+    /// work was started under. Nil once that generation has passed.
+    private func sessionIfCurrent(_ generation: Int) -> ActiveSession? {
+        guard generation == sessionGeneration else { return nil }
+        return activeSession
+    }
+
+    /// Observable mirror of `activeSession?.liveFid`. `ActiveSession`
+    /// is a plain class SwiftUI can't track, so every live-FID switch
+    /// goes through ``switchLive(fid:)`` which updates this — views
+    /// key off it (`.id(appState.liveFid)`) to rebuild after a switch.
+    private(set) var liveFid: String?
+
+    /// On-chain stats for the live FID — what the FID bar shows beyond
+    /// the locally-stored KeyInfo. Cache-first: the stored row renders
+    /// immediately on switch, then a `base.freerByIds` refresh replaces
+    /// it. Lives here rather than in `PaneHeader` because the bar is on
+    /// every pane, and per-view state would re-fetch on every pane
+    /// switch.
+    /// Bumped whenever something edits the live identity's `KeyInfo` —
+    /// today only its label. The `Setting` is a plain struct behind a
+    /// plain class, so SwiftUI cannot see a write to it; views that
+    /// render `liveKeyInfo` read this counter to pick the change up.
+    private(set) var identityRevision = 0
+
+    /// Observable mirror of the live Setting's `prikeyBackedUp` flag —
+    /// `Setting` is a struct behind a plain class, so SwiftUI cannot see it
+    /// change. Starts as `true` so the getting-started checklist cannot flash on the way
+    /// into a session that has long since been backed up.
+    private(set) var prikeyBackedUp: Bool = true
+
+    /// Observable mirrors of the getting-started flags on the live Setting,
+    /// for the same reason as ``prikeyBackedUp``.
+    private(set) var onboardingSkipped: Set<OnboardingStep> = []
+    private(set) var onboardingStarted = false
+    private(set) var onboardingCompleted = false
+
+    private(set) var liveFidInfo: LiveFidInfo?
+    private(set) var liveFidInfoLoading = false
+    private(set) var liveFidInfoError: String?
+
+    /// Which detail pane is on screen. Hoisted out of `HomeView` so
+    /// anything can navigate — the FID bar's numbers jump to Cash, and
+    /// the Overview tiles jump to whatever they are counting. A
+    /// `@State` in `HomeView` would have meant threading a binding
+    /// through all twenty-odd panes to achieve the same thing.
+    var selectedPane: WalletPane = .overview
+
+    /// The tab the Send pane shows. Hoisted for the same reason as
+    /// ``selectedPane``, and so it survives a trip to another pane.
+    var sendMode: SendView.Mode = .send
+
+    /// Open the First FCH board, which is the Help beginners pane.
+    func openFirstFchBoard() {
+        selectedPane = .helpBeginners
+    }
+
+    /// A chat flavour the Chat pane should open on, set by whoever
+    /// navigated there. One-shot: the pane reads it and clears it, so
+    /// coming back to Chat later lands on whatever tab the user last
+    /// used rather than re-running an old deep link.
+    private(set) var pendingChatMode: ImType?
+
+    /// Open the Chat pane on `mode`. The two writes belong together —
+    /// setting the tab without switching panes does nothing visible.
+    func openChat(mode: ImType) {
+        pendingChatMode = mode
+        selectedPane = .chat
+    }
+
+    /// Set with ``pendingChatMode`` when the Chat pane should also open its
+    /// new-chat sheet — the checklist's "Join a square", which is otherwise
+    /// a tab with a button on it to find.
+    private(set) var pendingNewChat = false
+
+    func openJoinSquare() {
+        pendingNewChat = true
+        openChat(mode: .square)
+    }
+
+    func consumePendingNewChat() -> Bool {
+        defer { pendingNewChat = false }
+        return pendingNewChat
+    }
+
+    /// Set with ``pendingChatMode`` when the Chat pane should also open
+    /// the team offers sheet.
+    ///
+    /// The Overview tile counts invitations and hand-overs that are
+    /// waiting on an answer, and landing the user on the team *list*
+    /// left them looking for the banner that leads to the answer. The
+    /// count is only cleared by answering, so the tile goes where the
+    /// answering happens.
+    private(set) var pendingTeamOffers = false
+
+    func openTeamOffers() {
+        pendingTeamOffers = true
+        openChat(mode: .team)
+    }
+
+    func consumePendingTeamOffers() -> Bool {
+        defer { pendingTeamOffers = false }
+        return pendingTeamOffers
+    }
+
+    func consumePendingChatMode() -> ImType? {
+        defer { pendingChatMode = nil }
+        return pendingChatMode
+    }
+
+    var route: AppRoute
+    var lastError: String?
+
+    /// Why the password screen is on screen, when it is there because
+    /// the app put it there. Not an error — the control did what it was
+    /// told — so it is not shown as one, and a manual lock sets nothing.
+    var lockNotice: String?
+
+    /// The inactivity clock behind the Auto-lock setting. Armed from the
+    /// live identity's preferences at unlock; off until one says
+    /// otherwise.
+    @ObservationIgnored private var autoLock = AutoLock()
+
+    /// Sleeps out what is left of the idle window, then locks. Nil
+    /// whenever auto-lock is off, so a setting nobody turned on costs
+    /// nothing at all.
+    @ObservationIgnored private var autoLockTask: Task<Void, Never>?
+
+    /// The local event monitor that notices the user is here.
+    @ObservationIgnored private var activityMonitor: Any?
+
+    /// Owned FAPI client (and, inside it, the UDP transport) kept here
+    /// so the lock-vault / switch-identity / save-new-settings paths
+    /// can close it, and so the wake / network-change observers can
+    /// mark it stale. nil when the session is using the stub client.
+    @ObservationIgnored
+    private var liveFapi: ReconnectingFapiClient?
+
+    /// The server the live client reads the chain through, and why that
+    /// one. Nil while on the stub. Settings shows it under Home › BASE.
+    private(set) var baseConnection: BaseConnection?
+    /// Why the main FID's home BASE is not the server in use, when it
+    /// names one this device declined to follow. Nil when there is nothing
+    /// to explain.
+    private(set) var homeBaseProblem: String?
+    @ObservationIgnored private var followingHomeBase = false
+    /// The session generation that has already moved to its home BASE.
+    /// One move per session: two servers that disagree about the home
+    /// would otherwise hand the client back and forth for ever.
+    @ObservationIgnored private var homeBaseSwitchGeneration: Int?
+
+    /// Wake-from-sleep and network-path observers. Held for their
+    /// lifetime — they live as long as the app does. Not observable:
+    /// a Wi-Fi flap is no reason to redraw the UI.
+    @ObservationIgnored private var wakeObserver: (any NSObjectProtocol)?
+    @ObservationIgnored private var pathMonitor: NWPathMonitor?
+    @ObservationIgnored private var lastPathSummary: String?
+    @ObservationIgnored private var activationObservers: [any NSObjectProtocol] = []
+
+    /// Polls the DOCKs so messages arrive on their own. Lives exactly as
+    /// long as a live FAPI client does: with no server configured there
+    /// is nothing to poll.
+    @ObservationIgnored private var fetchScheduler: DockFetchScheduler?
+
+    /// The two inputs to the polling layer, kept apart because they
+    /// change independently: the OS tells us about one, the chat pane
+    /// about the other.
+    @ObservationIgnored private var appIsActive = true
+    @ObservationIgnored private var chatIsOpen = false
+    /// How many invitations were waiting after the last collect, so a
+    /// new one can be told apart from one already seen.
+    @ObservationIgnored private var awaitingAnswers = 0
+
+    /// Raises the "approve this transaction?" modal for every signing
+    /// path, when the identity has that setting on. Lives on AppState
+    /// because the dialog has to be presentable from the root view no
+    /// matter which pane started the transaction — and because a
+    /// background carve (the chat outbox, a retry) has no pane at all.
+    let txApprovals = TxApprovalCenter()
+
+    /// Bumped whenever a background collect filed something. Views watch
+    /// it to reload — an observable counter is the smallest thing that
+    /// can carry "the transcript changed underneath you" from a
+    /// non-UI task into SwiftUI.
+    private(set) var inboxRevision = 0
+
+    /// How many newcomers are waiting on the first-FCH board, for the
+    /// identity that opted into looking. Zero when nobody is waiting,
+    /// when the setting is off, or when the board could not be read —
+    /// a login is the wrong moment to report a server problem the user
+    /// did not ask about.
+    private(set) var newcomersWaiting = 0
+
+    /// FIDs already checked this app run, so returning to Overview does
+    /// not re-ask the board on every appearance.
+    @ObservationIgnored private var boardCheckedFids: Set<String> = []
+
+    /// Look at the board once, for an identity that asked to.
+    ///
+    /// **Read-only, and it does not move the cursor.** The count is a
+    /// nudge towards the pane; advancing the watermark here would hide
+    /// from the board the very requests this just counted.
+    func checkFirstFchBoardIfOptedIn() {
+        guard let session = activeSession else { return }
+        let fid = session.liveFid
+        guard session.firstFchBoardState.get(fid: fid).checkAtLogin else { return }
+        guard boardCheckedFids.insert(fid).inserted else { return }
+        let board = session.firstFchBoard
+        let cursor = session.firstFchBoardState.get(fid: fid).cursor
+        Task { @MainActor in
+            let result = await board.fetch(newerThan: cursor)
+            guard result.error == nil, session.liveFid == fid else { return }
+            newcomersWaiting = result.requests.count
+        }
+    }
+
+    func clearNewcomersWaiting() { newcomersWaiting = 0 }
+
+    /// DOCKs that answered 402 on the last pass: our prepaid balance
+    /// with them ran out, and their messages wait until it is topped up.
+    /// Drives the Overview's "Server balance" tile and ``DockTopUpSheet``.
+    private(set) var unpaidDocks: [DockRegistry.Unpaid] = []
+
+    /// Re-read the registry's unpaid list after a fetch pass. Assigned
+    /// only on change so an unchanged list does not redraw Overview on
+    /// every poll. Compared whole, not by URL: a top-up being sent is a
+    /// change to an entry already listed.
+    private func publishUnpaidDocks(of session: ActiveSession, generation: Int) async {
+        let now = await session.dockRegistry.unpaidDocks()
+        guard sessionGeneration == generation else { return }
+        if now != unpaidDocks { unpaidDocks = now }
+    }
+
+    /// Ask `dockUrl` again and run a pass now — for the moment a top-up
+    /// has been paid, or the user wants to check. Republishes first so
+    /// the tile turns to "confirming" without waiting on the fetch.
+    func retryUnpaidDock(_ dockUrl: String) {
+        guard let session = activeSession else { return }
+        let generation = sessionGeneration
+        Task {
+            await session.dockRegistry.retryUnpaid(dockUrl)
+            await publishUnpaidDocks(of: session, generation: generation)
+            fetchInboxNow()
+        }
+    }
+
+    /// The live FID holds nothing, and we actually know that.
+    ///
+    /// Three states collapse to "no coins" and only one of them is worth
+    /// acting on: a balance of zero, a FID with no on-chain record at all
+    /// (``ActiveSession/refreshLiveFidInfo()`` leaves `balance` nil for
+    /// one the index has never seen — which is precisely the newcomer
+    /// this is for), and *not knowing yet*. The first two are broke; the
+    /// third must not be, or every helper with a full wallet sees the
+    /// newcomer banner flash on a slow connection. An index we could not
+    /// reach says nothing either way.
+    var liveFidIsBroke: Bool {
+        guard activeSession != nil, !liveFidInfoLoading, liveFidInfoError == nil else {
+            return false
+        }
+        return (liveFidInfo?.balance ?? 0) == 0
+    }
+
+    /// Closure that produces the *initial* (pre-settings-applied)
+    /// FAPI client for a freshly-unlocked main. Default = stub. The
+    /// real client gets swapped in by ``applyFapiSettings(_:)`` once
+    /// the unlocked session can read its preferences.
+    private let fapiFactory: @Sendable (String) -> any FapiCalling
+
+    init(
+        manager: ConfigureManager? = nil,
+        fapiFactory: @escaping @Sendable (String) -> any FapiCalling = { _ in StubFapiClient() }
+    ) {
+        let resolved: ConfigureManager
+        do {
+            resolved = try manager ?? ConfigureManager()
+        } catch {
+            // Last-resort fallback: use temp dir so the UI still draws
+            // and we surface the error rather than crashing on launch.
+            let tmp = FileManager.default.temporaryDirectory
+                .appendingPathComponent("fc.freer.mac.fallback-\(UUID().uuidString)")
+            // If even a temporary directory cannot be prepared there is
+            // nowhere to write, and the previous `try!` turned that into
+            // a crash inside the fallback that exists to prevent one.
+            // A manager over an unusable directory fails per operation
+            // instead, which the banner below already explains.
+            resolved = (try? ConfigureManager(baseDirectory: tmp))
+                ?? (try? ConfigureManager(baseDirectory: FileManager.default.temporaryDirectory))
+                ?? ConfigureManager.unavailable(baseDirectory: tmp)
+            self.manager = resolved
+            self.fapiFactory = fapiFactory
+            self.configures = []
+            self.route = .password
+            self.lastError = "Couldn't open vault storage: \(error). Data won't persist."
+            self.installConnectivityObservers()
+            self.installActivityMonitor()
+            return
+        }
+        self.manager = resolved
+        self.fapiFactory = fapiFactory
+        // Nobodies (published prikeys) learned by any lookup, kept across
+        // launches. Beside the configures, outside any vault: it holds only
+        // identities that are public by definition. See NOBODY_SPEC.md.
+        NobodyRegistry.shared.install(
+            store: FileNobodyStore(url: resolved.baseDirectory.appendingPathComponent("nobodies.json"))
+        )
+        // Always start at the password view — never reveal whether
+        // the vault index is empty.
+        self.configures = (try? resolved.listConfigures()) ?? []
+        self.route = .password
+        self.installConnectivityObservers()
+        self.installActivityMonitor()
+    }
+
+    deinit {
+        if let wakeObserver {
+            NotificationCenter.default.removeObserver(wakeObserver)
+        }
+        for observer in activationObservers {
+            NotificationCenter.default.removeObserver(observer)
+        }
+        pathMonitor?.cancel()
+    }
+
+    // MARK: - connectivity observers
+
+    /// Watch the two events that silently kill a live UDP flow, and
+    /// mark the FAPI client stale so the next call comes up on a fresh
+    /// socket. Marking (rather than reconnecting here and now) is
+    /// deliberate: at wake time Wi-Fi has usually not reassociated
+    /// yet, so an immediate reconnect would just build a second dead
+    /// socket.
+    private func installConnectivityObservers() {
+        // iOS suspends a backgrounded app within seconds, and the UDP
+        // flow does not outlive the suspension: coming back to the
+        // foreground is this platform's wake-from-sleep.
+        wakeObserver = NotificationCenter.default.addObserver(
+            forName: UIApplication.willEnterForegroundNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            // Registered on the main queue, so this already *is* the
+            // main actor — saying so costs the two calls below neither a
+            // hop nor a concurrency warning each.
+            MainActor.assumeIsolated {
+                self?.markTransportsStale()
+                // A phone left in a pocket past the timeout is locked
+                // the moment the app comes back, rather than whenever
+                // the countdown's own sleep is next rescheduled.
+                self?.checkAutoLockNow()
+            }
+        }
+
+        let monitor = NWPathMonitor()
+        monitor.pathUpdateHandler = { [weak self] path in
+            // Interfaces flap during a wake; only a real change of
+            // status or interface set means the old flow is finished.
+            let summary = "\(path.status)|"
+                + path.availableInterfaces.map(\.name).joined(separator: ",")
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.lastPathSummary != summary else { return }
+                let hadPath = self.lastPathSummary != nil
+                self.lastPathSummary = summary
+                // The first update just records the baseline — there is
+                // no connection to invalidate at startup.
+                if hadPath { self.markTransportsStale() }
+            }
+        }
+        monitor.start(queue: DispatchQueue(label: "fc.path-monitor", qos: .utility))
+        pathMonitor = monitor
+
+        // How hard to poll depends on whether anyone is looking. An app
+        // in the background still collects — a message that arrived
+        // while it was hidden should be there when it comes back — just
+        // at a third of the rate.
+        let center = NotificationCenter.default
+        for (name, active) in [
+            (UIApplication.didBecomeActiveNotification, true),
+            (UIApplication.willResignActiveNotification, false),
+        ] {
+            activationObservers.append(
+                center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                    // Registered on the main queue, so this already *is*
+                    // the main actor.
+                    MainActor.assumeIsolated {
+                        guard let self else { return }
+                        self.appIsActive = active
+                        self.applyFetchLayer()
+                    }
+                }
+            )
+        }
+    }
+
+    /// Bounce the Dock icon when a collect brought an invitation and
+    /// nobody is looking at the app.
+    ///
+    /// Android puts a dialog in front of the user wherever they are. A
+    /// Mac app that raised a modal alert from a background poll would be
+    /// taking focus it was not given, so this asks for attention the way
+    /// Mac apps do and leaves the invitation itself to the Overview tile
+    /// and the tab badge. Counted rather than flagged per message, so a
+    /// sync that only re-reads what is already there bounces nothing.
+    private func noticeNewInvitations() {
+        guard let session = activeSession else { return }
+        let now = session.awaitingAnswer(type: .room) + session.awaitingAnswer(type: .team)
+        defer { awaitingAnswers = now }
+        guard now > awaitingAnswers, !appIsActive else { return }
+        // iOS has no Dock icon to bounce, and an app that is not in
+        // front is about to be suspended: the invitation waits on the
+        // home screen's badge for the user to come back to.
+    }
+
+    // MARK: - background collection
+
+    /// Whether a chat pane is on screen. No longer changes the polling
+    /// rate, which follows only whether Freer is in front (see
+    /// ``applyFetchLayer()``): a meeting's ring cannot wait for the user to
+    /// open a chat. The open conversation's own DOCK is still hot.
+    func setChatOpen(_ open: Bool) {
+        guard chatIsOpen != open else { return }
+        chatIsOpen = open
+        applyFetchLayer()
+    }
+
+    /// Put one conversation's DOCK on the fast lane. Pass nil when the
+    /// conversation closes.
+    func setPriorityDock(_ dockUrl: String?) {
+        chatPriorityDock = dockUrl
+        pushPriorityDocks()
+    }
+
+    /// The open chat's DOCK, fetched every few seconds while it is open.
+    @ObservationIgnored private var chatPriorityDock: String?
+    /// Our own DOCK, fetched every few seconds whenever the app runs: a
+    /// call rings a Mac only while the app runs (VOICE_SPEC §11.2), and an
+    /// INVITE waiting for a slow fetch outlives its 45 s ring.
+    @ObservationIgnored private var ownDockHot: String?
+
+    /// A running meeting's Room or Team DOCK, fetched every few seconds
+    /// whatever pane is open: its cards and key re-posts arrive there, and
+    /// key shares after a rotation land in our own DOCK, already hot.
+    @ObservationIgnored private var meetingDock: String?
+
+    private func setMeetingDocks(type: ImType?, id: String?) {
+        guard let type, let id, let session = activeSession else {
+            meetingDock = nil
+            pushPriorityDocks()
+            return
+        }
+        Task { @MainActor [weak self] in
+            let url = await session.dockRegistry.dockUrl(forTarget: id, type: type)
+            guard let self else { return }
+            self.meetingDock = url
+            self.pushPriorityDocks()
+        }
+    }
+
+    private func pushPriorityDocks() {
+        guard let fetchScheduler else { return }
+        let docks = Set([chatPriorityDock, ownDockHot, meetingDock].compactMap { $0 })
+        Task { await fetchScheduler.setPriorityDocks(docks) }
+    }
+
+    /// Collect from every DOCK right now, off the schedule.
+    func fetchInboxNow() {
+        guard let fetchScheduler else { return }
+        Task { await fetchScheduler.fetchNow() }
+    }
+
+    private func applyFetchLayer() {
+        guard let fetchScheduler else { return }
+        // A new meeting rings only while its card is fresh (VOICE_SPEC Decision 21), so
+        // every DOCK is checked every 10 s while Freer is in front, whatever pane is open,
+        // and every minute behind: a Mac keeps running, and a card 3 minutes late rings no one.
+        // Our own DOCK, where calls land, is on the fast lane throughout.
+        let layer: DockFetchScheduler.Layer = appIsActive ? .active : .normal
+        Task { await fetchScheduler.setLayer(layer) }
+    }
+
+    /// Build and start the poller for the session of `generation`.
+    ///
+    /// The closures are the only thing that reaches back into the
+    /// session, and they deliberately re-read it each pass rather than
+    /// capturing it: a scheduler holding a session the user has since
+    /// locked would keep decrypting into a store nobody is looking at,
+    /// and would keep that session's keys alive for as long as it ran.
+    ///
+    /// **But re-reading alone says only that *a* session is live.** The
+    /// generation says it is still *this* one. Without it a scheduler
+    /// that outlived its own identity picks up the next one and polls it
+    /// with the previous one's dock set, cursors and fast lane — the
+    /// cross-session pass that ``sessionGeneration`` exists to make
+    /// impossible.
+    private func startFetchScheduler(for session: ActiveSession, generation: Int) {
+        stopFetchScheduler()
+        let scheduler = DockFetchScheduler(
+            collect: { [weak self] selection in
+                // Re-read on the actor each pass, per the note above: the
+                // session may have been locked since the last one.
+                guard let session = await self?.sessionIfCurrent(generation) else { return .none }
+                do {
+                    let report = try await session.courier.collect(
+                        as: session.liveFid,
+                        docks: selection,
+                        privkey: try? session.livePrikey()
+                    )
+                    await self?.publishUnpaidDocks(of: session, generation: generation)
+                    // A history answer is routed during the collect but
+                    // is a file on somebody's DISK, which the synchronous
+                    // router cannot fetch. Nothing waiting makes this a
+                    // read of one empty namespace.
+                    await session.historyShare.importReceived(as: session.liveFid)
+                    return report
+                } catch {
+                    return .none
+                }
+            },
+            drain: { [weak self] in
+                guard let session = await self?.sessionIfCurrent(generation) else { return }
+                _ = try? await session.courier.drainOutbox(as: session.liveFid)
+            },
+            report: { [weak self] _ in
+                Task { @MainActor in
+                    guard let self, self.sessionGeneration == generation else { return }
+                    self.inboxRevision += 1
+                    self.noticeNewInvitations()
+                }
+            }
+        )
+        fetchScheduler = scheduler
+        applyFetchLayer()
+        Task { await scheduler.start() }
+        callCenter.attach(session)
+        meetingCenter.attach(session)
+        Task { @MainActor [weak self] in
+            let own = await session.dockRegistry.ownDockUrl
+            guard let self, self.sessionGeneration == generation else { return }
+            self.ownDockHot = own
+            self.pushPriorityDocks()
+        }
+    }
+
+    /// Put the current poller away, completely, before this line
+    /// returns.
+    ///
+    /// ``DockFetchScheduler/stop()`` is actor-isolated and could only be
+    /// launched from here, which left the old scheduler polling while
+    /// ``startFetchScheduler(for:generation:)`` was already building its
+    /// replacement on the next line. ``shutdown()`` is the synchronous
+    /// half of the same operation.
+    private func stopFetchScheduler() {
+        meetingCenter.detach()
+        callCenter.detach()
+        unpaidDocks = []
+        guard let fetchScheduler else { return }
+        self.fetchScheduler = nil
+        fetchScheduler.shutdown()
+    }
+
+    // MARK: - password flow
+
+    /// Try to open the Configure whose `passwordName` matches this
+    /// password. Falls through to creating a new Configure when none
+    /// exists yet (`createIfMissing == true`).
+    ///
+    /// Errors are deliberately generic — "Couldn't open vault" /
+    /// "Couldn't create vault" — so a wrong password vs. an unknown
+    /// password are indistinguishable on screen.
+    func openOrCreate(
+        password: Data,
+        createIfMissing: Bool,
+        kdfKind: KdfKind = .argon2id
+    ) async {
+        lastError = nil
+        lockNotice = nil
+        let passwordName = ConfigureCrypto.passwordName(from: password)
+        let manager = self.manager
+
+        if let _ = configures.first(where: { $0.passwordName == passwordName }) {
+            // Existing Configure — try to open.
+            do {
+                let cs = try await Task.detached(priority: .userInitiated) {
+                    try manager.openConfigure(passwordName: passwordName, password: password)
+                }.value
+                self.configureSession = cs
+                self.route = .chooseMain
+            } catch {
+                lastError = "Couldn't open vault."
+            }
+            return
+        }
+
+        // No Configure with this passwordName.
+        guard createIfMissing else {
+            lastError = "Couldn't open vault."
+            return
+        }
+
+        do {
+            let cs = try await Task.detached(priority: .userInitiated) {
+                try manager.createConfigure(password: password, label: "", kdfKind: kdfKind)
+            }.value
+            self.configureSession = cs
+            self.configures = (try? manager.listConfigures()) ?? configures
+            self.route = .chooseMain
+        } catch {
+            lastError = "Couldn't create vault."
+        }
+    }
+
+    // MARK: - configure-level lock
+
+    /// Lock both the active session and the configure session. Send
+    /// the user back to the password screen. Closes the live FUDP
+    /// transport (if any) so its UDP socket is released.
+    func lockAll() {
+        // First of all, so that an unlock, a FAPI connect or a fetch
+        // pass still in flight for this session finds the generation
+        // moved when it comes back, and drops what it was carrying
+        // instead of restoring a vault the user has closed.
+        retireSession()
+        stopAutoLock()
+        lockNotice = nil
+        // Anything parked on a confirmation dialog is answered "no"
+        // first: the session is about to disappear, and a question
+        // nobody can answer must not turn into a signature.
+        txApprovals.cancelAll()
+        tearDownLiveFapi()
+        activeSession = nil
+        liveFid = nil
+        prikeyBackedUp = true
+        onboardingSkipped = []
+        onboardingStarted = false
+        onboardingCompleted = false
+        clearLiveFidInfo()
+        configureSession?.lock()
+        configureSession = nil
+        configures = (try? manager.listConfigures()) ?? configures
+        // The theme belonged to the identity we just put away.
+        applyTheme(.system)
+        route = .password
+    }
+
+    // MARK: - auto-lock
+
+    /// Watch for the user being here.
+    ///
+    /// **Local, not global.** A global monitor sees events aimed at every
+    /// other app and needs the Accessibility permission to do it — a
+    /// prompt asking to observe all of someone's typing, to implement a
+    /// timeout. What it would add is the time spent in other apps, and
+    /// for this purpose that is not activity: a vault left open behind
+    /// somebody else's window is exactly the case being timed.
+    ///
+    /// Installed once, for the life of the process. The handler is on
+    /// the hot path of every key and every click, so it stamps one
+    /// instant and gets out of the way.
+    private func installActivityMonitor() {
+        // Nothing to install here on iOS: there is no process-wide event
+        // tap. ``ActivityWatch`` sits on the window instead and calls
+        // ``noteUserActivity()`` for every touch that lands.
+    }
+
+    func noteUserActivity() {
+        guard autoLock.isArmed else { return }
+        autoLock.noteActivity()
+    }
+
+    /// Arm — or disarm — the clock from the live identity's setting.
+    ///
+    /// Called at unlock and again whenever Settings is saved, because
+    /// the timeout is a per-identity preference: it cannot be known
+    /// before a session is open, and it changes underneath one.
+    func applyAutoLockSetting(for session: ActiveSession) {
+        autoLock.setTimeout(seconds: (try? session.preferences.load())?.autoLockSeconds)
+        restartAutoLockCountdown()
+    }
+
+    /// Sleep out what is left of the idle window, then lock.
+    ///
+    /// A countdown rather than a poll: the clock knows exactly how long
+    /// it has, so there is nothing to ask every few seconds. Activity
+    /// during the sleep only means the next lap has further to go, and
+    /// someone working steadily wakes this once per timeout. The sleep
+    /// is on the same continuous clock ``AutoLock`` measures with, so
+    /// time the machine spends asleep is counted by both.
+    private func restartAutoLockCountdown() {
+        autoLockTask?.cancel()
+        guard autoLock.isArmed else {
+            autoLockTask = nil
+            return
+        }
+        autoLockTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                guard let self, let remaining = self.autoLock.remaining() else { return }
+                guard remaining > .zero else {
+                    self.lockForInactivity()
+                    return
+                }
+                do { try await Task.sleep(for: remaining) } catch { return }
+            }
+        }
+    }
+
+    /// Close the vault because nobody is here, and say so.
+    ///
+    /// The notice matters more than it looks: without it the app has
+    /// silently thrown away a session, several terminals and the ssh
+    /// agent, and the only thing on screen is a password field that
+    /// looks like a crash or a relaunch.
+    private func lockForInactivity() {
+        let minutes = autoLock.timeout.map { max(1, Int($0.components.seconds) / 60) }
+        lockAll()
+        if let minutes {
+            lockNotice = "Locked after \(minutes) minute\(minutes == 1 ? "" : "s") without activity."
+        }
+    }
+
+    /// Lock now if the idle window elapsed while nothing was watching.
+    ///
+    /// The countdown is a sleeping task, and a machine that suspends
+    /// takes the task with it. ``AutoLock`` counts that time — it
+    /// measures on a continuous clock, and refuses to accept activity
+    /// that arrives after the deadline — but somebody has to ask, and
+    /// waking up is the moment to.
+    private func checkAutoLockNow() {
+        guard autoLock.hasExpired() else { return }
+        lockForInactivity()
+    }
+
+    /// Put the clock away. Only a lock does this — a vault left open at
+    /// the identity chooser is the same vault, and the same reason to
+    /// close it, so ``returnToChooseMain()`` deliberately leaves the
+    /// countdown running.
+    private func stopAutoLock() {
+        autoLockTask?.cancel()
+        autoLockTask = nil
+        autoLock.setTimeout(seconds: nil)
+    }
+
+    // MARK: - main FID flow
+
+    /// Add a main FID inside the unlocked Configure. The privkey is
+    /// validated by deriving its FID; on success the new KeyInfo is
+    /// persisted to the Configure body.
+    func addMain(privkey: Data, label: String) async {
+        guard let cs = configureSession else {
+            lastError = "No unlocked Configure."
+            return
+        }
+        lastError = nil
+        do {
+            let added = try await Task.detached(priority: .userInitiated) {
+                try cs.addMain(privkey: privkey, label: label)
+            }.value
+            await openAdded([added.fid])
+        } catch {
+            lastError = String(describing: error)
+        }
+    }
+
+    /// Add several main FIDs at once — the keys of an imported backup.
+    /// Stops at the first failure, leaving the ones before it added, and
+    /// only leaves this screen when every key went in.
+    func addMains(_ keys: [(privkey: Data, label: String)]) async {
+        guard let cs = configureSession else {
+            lastError = "No unlocked Configure."
+            return
+        }
+        lastError = nil
+        do {
+            let added = try await Task.detached(priority: .userInitiated) {
+                try keys.map { try cs.addMain(privkey: $0.privkey, label: $0.label).fid }
+            }.value
+            await openAdded(added)
+        } catch {
+            lastError = String(describing: error)
+        }
+    }
+
+    /// After adding mains: a single new identity is the one the user
+    /// meant to use, so open it straight away; several go back to the
+    /// chooser to pick from. The chooser is the route either way first,
+    /// so a failed open leaves its error there, next to the new row.
+    private func openAdded(_ fids: [String]) async {
+        self.route = .chooseMain
+        if fids.count == 1 {
+            await unlockMain(fid: fids[0])
+        }
+    }
+
+    /// Delete a main FID from the unlocked Configure. The vault holds
+    /// the only copy of its encrypted privkey, so this cannot be undone.
+    ///
+    /// `deletingSetting` also removes the FID's on-disk Setting
+    /// directory — contacts, caches, chat state. Leaving it behind is
+    /// the kinder default: re-importing the same privkey later picks the
+    /// directory straight back up, so only the key is actually lost.
+    func deleteMain(fid: String, deletingSetting: Bool) async {
+        guard let cs = configureSession else {
+            lastError = "No unlocked Configure."
+            return
+        }
+        lastError = nil
+        do {
+            let removed = try await Task.detached(priority: .userInitiated) {
+                deletingSetting
+                    ? try cs.deleteMainAndSetting(fid: fid)
+                    : try cs.removeMain(fid: fid)
+            }.value
+            if !removed {
+                lastError = "That identity is no longer in this vault."
+            }
+        } catch {
+            lastError = String(describing: error)
+        }
+    }
+
+    /// Unlock one of the main FIDs and open an ActiveSession. The
+    /// session starts with the stub `FapiClient`; if the per-main
+    /// preferences have an FAPI server configured the real client is
+    /// built and swapped in immediately afterward.
+    func unlockMain(fid: String) async {
+        guard let cs = configureSession else {
+            lastError = "No unlocked Configure."
+            return
+        }
+        lastError = nil
+        let factory = self.fapiFactory
+        let generation = sessionGeneration
+        do {
+            let session = try await Task.detached(priority: .userInitiated) {
+                try cs.unlockMain(fid: fid, fapi: factory(fid))
+            }.value
+            // **The unlock crossed a suspension, and a lock fits inside
+            // one.** "Lock vault" is a menu command with a keyboard
+            // shortcut, enabled on every screen the moment a Configure is
+            // open, and opening a main takes an Argon2id-shaped pause. A
+            // session assigned after that would put the vault back on
+            // screen that the user had just closed — and leave
+            // ``route`` on `.home` behind the password field. Dropping
+            // the session is the whole cleanup: it holds the stub client,
+            // so there is no socket to close, and nothing else has seen
+            // it yet.
+            guard generation == sessionGeneration else { return }
+            retireSession()
+            session.txApprover = self.txApprovals.approver()
+            self.activeSession = session
+            self.liveFid = session.liveFid
+            self.prikeyBackedUp = session.prikeyBackedUp
+            self.onboardingSkipped = session.onboardingSkipped
+            self.onboardingStarted = session.onboardingStarted
+            self.onboardingCompleted = session.onboardingCompleted
+            // Replay records older than any DOCK can still serve are dead weight.
+            _ = try? session.seenMessages.prune()
+            // Every identity opens on Overview. The pane is app state, so
+            // without this a new identity landed on whatever pane the
+            // previous one was left on.
+            self.selectedPane = .overview
+            self.route = .home
+            // Before the first frame of `.home`: the theme is a
+            // per-identity preference, so it can only be known now. The
+            // same is true of the inactivity timeout.
+            applyStoredTheme(for: session)
+            applyAutoLockSetting(for: session)
+            // Show whatever the last session cached before the network
+            // is even up — the bar should never start blank.
+            self.loadCachedLiveFidInfo()
+            // Best-effort attempt to bring up the live FAPI client.
+            // Failure is non-fatal — Overview will show the stub
+            // error and the Settings pane lets the user fix things.
+            await applyFapiSettings(for: session)
+        } catch {
+            lastError = String(describing: error)
+        }
+    }
+
+    /// Drop the active session but keep the Configure unlocked.
+    /// Returns the user to the main chooser so they can pick a
+    /// different main FID without re-entering the password. The
+    /// live FUDP transport is torn down (different main → different
+    /// keypair → different AsyTwoWay session anyway).
+    func returnToChooseMain() {
+        // As in ``lockAll()``: retire the outgoing session's in-flight
+        // work before anything else, so none of it lands on the next
+        // identity's session.
+        retireSession()
+        txApprovals.cancelAll()
+        tearDownLiveFapi()
+        // A different main FID derives a different SSH key, so the
+        // running agent is not merely stale — it holds the wrong one.
+        activeSession = nil
+        liveFid = nil
+        prikeyBackedUp = true
+        onboardingSkipped = []
+        onboardingStarted = false
+        onboardingCompleted = false
+        clearLiveFidInfo()
+        applyTheme(.system)
+        route = .chooseMain
+    }
+
+    // MARK: - appearance
+
+    /// Force the app's appearance to match the identity's stored
+    /// theme. `.system` releases it back to the system setting.
+    ///
+    /// Applied process-wide via `NSApp.appearance` rather than as a
+    /// `preferredColorScheme` on the root view: the transaction
+    /// approval panel and the terminal's AppKit view are not inside
+    /// that hierarchy, and would keep the system appearance while the
+    /// rest of the window changed.
+    ///
+    /// **Main thread only, and not merely by convention.** Setting
+    /// `NSApp.appearance` takes AppKit's lock on the application's
+    /// appearance and then walks every window's view tree, which ends
+    /// in `NSHostingView` reaching for SwiftUI's view-graph lock. The
+    /// main thread takes those two in the opposite order whenever it
+    /// lays out — it holds the view graph and asks AppKit for the
+    /// effective appearance. Called off-main the two orders meet and
+    /// the app hangs with no CPU burned and nothing on screen. That
+    /// is now the actor's guarantee rather than a runtime check:
+    /// ``AppState`` is `@MainActor`, so there is no caller that could
+    /// arrive here from anywhere else.
+    func applyTheme(_ theme: Preferences.Theme) {
+        let style: UIUserInterfaceStyle
+        switch theme {
+        case .system: style = .unspecified
+        case .light:  style = .light
+        case .dark:   style = .dark
+        }
+        // On the windows rather than as a `preferredColorScheme` on the
+        // root view, for the reason above: what is presented over the
+        // root — the approval panel, the file pickers — takes its
+        // appearance from the window, not from the SwiftUI hierarchy.
+        themeStyle = style
+        for case let scene as UIWindowScene in UIApplication.shared.connectedScenes {
+            for window in scene.windows { window.overrideUserInterfaceStyle = style }
+        }
+    }
+
+    /// The style last asked for, so a window that appears later — the
+    /// first one, at launch — can be given it too.
+    @ObservationIgnored private(set) var themeStyle: UIUserInterfaceStyle = .unspecified
+
+    /// Apply the theme stored in a just-unlocked identity's
+    /// preferences. Silent on failure: a preferences row we cannot
+    /// read is already reported by ``applyFapiSettings(for:)``, and a
+    /// second copy of that error buys nothing.
+    private func applyStoredTheme(for session: ActiveSession) {
+        guard let prefs = try? session.preferences.load() else { return }
+        applyTheme(prefs.theme ?? .system)
+    }
+
+    // MARK: - live FAPI
+
+    /// Tear down the FUDP transport behind the live FAPI client and
+    /// reset the session's `fapi` to the stub. Idempotent.
+    private func tearDownLiveFapi() {
+        stopFetchScheduler()
+        liveFapi?.close()
+        liveFapi = nil
+        baseConnection = nil
+        homeBaseProblem = nil
+        activeSession?.setFapi(StubFapiClient())
+    }
+
+    /// Read the per-main preferences and bring up a real
+    /// ``FapiClient`` if FAPI is configured. Closes any previous
+    /// live transport. Failure leaves the session on the stub
+    /// client and surfaces the error via `lastError`.
+    func applyFapiSettings(for session: ActiveSession) async {
+        // Captured before the first await, and checked after the connect
+        // — which is a network round trip, and the longest window in the
+        // app in which a vault can be locked underneath a caller.
+        let generation = sessionGeneration
+        let prefs: Preferences
+        do {
+            prefs = try session.preferences.load()
+        } catch {
+            lastError = "Couldn't read preferences: \(error)"
+            return
+        }
+
+        // No usable FAPI config → stub. `PreferencesStore.load()`
+        // backfills the project server when the row has no service at
+        // all, so landing here means the stored values are malformed —
+        // say so, because the alternative is every pane loading empty
+        // with nothing on screen to explain why.
+        // Pinned to this device's server, there is no move to have made; one
+        // made earlier must not stop the home being followed again once
+        // the pin is lifted.
+        if !prefs.followsHomeBase { homeBaseSwitchGeneration = nil }
+        let candidates = prefs.baseCandidates.compactMap { candidate -> (BaseEndpoint, String, UInt16, Data)? in
+            guard let (host, port) = parseHostPort(candidate.service),
+                  let pubkey = decodeHex(candidate.pubkeyHex), pubkey.count == 33
+            else { return nil }
+            return (candidate, host, port, pubkey)
+        }
+        guard !candidates.isEmpty else {
+            tearDownLiveFapi()
+            lastError = """
+                No FAPI server configured — nothing will load. \
+                Open Settings and set the host, port and server pubkey \
+                (Discover fills the pubkey in), then Save.
+                """
+            return
+        }
+
+        let priv: Data
+        do {
+            priv = try session.mainPrikey()
+        } catch {
+            lastError = "Couldn't read main prikey: \(error)"
+            return
+        }
+
+        // Connect eagerly so a bad host/port/pubkey is reported now, in
+        // Settings, rather than at the next chain sync — and so a home
+        // BASE that is down hands over to the Settings server instead of
+        // leaving the FID unable to reach the chain to move it.
+        var opened: (endpoint: BaseEndpoint, host: String, port: UInt16, pubkey: Data, fudp: FudpClient)?
+        var lastFailure: (any Error)?
+        for (endpoint, host, port, pubkey) in candidates {
+            do {
+                let fudp = try await FudpClient(
+                    host: host, port: port, peerPubkey: pubkey, localPrivkey: priv
+                )
+                opened = (endpoint, host, port, pubkey, fudp)
+                break
+            } catch {
+                lastFailure = error
+                if endpoint.source == .home {
+                    SystemLog.shared.warning(
+                        SystemSource.fapi,
+                        "Your home BASE \(host):\(port) is not answering",
+                        detail: "\(error)\nFalling back to the server set in Settings."
+                    )
+                }
+            }
+        }
+        guard let opened else {
+            // A failure that belongs to a session which has since gone
+            // is not news for the one on screen now, and tearing down
+            // "the" live transport here would tear down *its* one.
+            guard isCurrent(session, generation) else { return }
+            let (_, host, port, _) = candidates[candidates.count - 1]
+            lastError = "FAPI connect failed: \(lastFailure.map { String(describing: $0) } ?? "no server answered")"
+            SystemLog.shared.error(
+                SystemSource.fapi,
+                "Could not connect to \(host):\(port)",
+                detail: "\(lastFailure.map { String(describing: $0) } ?? "")\nWallet, chat and sync all run over this connection."
+            )
+            tearDownLiveFapi()
+            return
+        }
+        let (host, port, pubkey) = (opened.host, opened.port, opened.pubkey)
+
+        // Everything the transport needs, captured once so the wrapper
+        // can rebuild it later without re-reading preferences (which
+        // would need the session — and its unlocked privkey — on a
+        // background reconnect).
+        let factory: @Sendable () async throws -> FudpClient = {
+            try await FudpClient(
+                host: host,
+                port: port,
+                peerPubkey: pubkey,
+                localPrivkey: priv
+            )
+        }
+
+        // Opens a client to *any other* DOCK, given only its URL.
+        //
+        // The peer's pubkey is not configured anywhere — it cannot be,
+        // since the URL comes off the chain at send time — so it is
+        // discovered with a plaintext HELLO first, exactly as the
+        // Settings pane's "fetch pubkey" button does and as Android's
+        // `bootstrapFromUrl` does before building its client. The
+        // discovery is repeated on every reconnect because a server
+        // that moved may also have re-keyed.
+        let connect: @Sendable (String) async throws -> any FapiCalling = { url in
+            guard let endpoint = FudpUrl.hostPort(url) else {
+                throw DockConnectFailure.unusableUrl(url)
+            }
+            let build: @Sendable () async throws -> FudpClient = {
+                let peerPubkey = try await FudpDiscovery.discoverPubkey(
+                    host: endpoint.host, port: endpoint.port
+                )
+                return try await FudpClient(
+                    host: endpoint.host,
+                    port: endpoint.port,
+                    peerPubkey: peerPubkey,
+                    localPrivkey: priv
+                )
+            }
+            return ReconnectingFapiClient(factory: build, initial: try await build())
+        }
+
+        let fudp = opened.fudp
+        // **Nothing below may run for a session that has gone.** The
+        // connect above holds a live UDP flow keyed to the main's
+        // prikey; publishing it into a vault that was locked while it
+        // was being opened leaves exactly the socket that
+        // ``tearDownLiveFapi()`` exists to release, on a session the
+        // user believes is closed. Close it and say nothing — the
+        // lock is not an error to report.
+        guard isCurrent(session, generation) else {
+            fudp.close()
+            return
+        }
+        // Swap atomically: close old → assign new → publish.
+        liveFapi?.close()
+        let client = ReconnectingFapiClient(factory: factory, initial: fudp)
+        liveFapi = client
+        session.setFapi(client)
+        baseConnection = BaseConnection(
+            service: "\(host):\(port)",
+            pubkeyHex: Hex.encode(pubkey).lowercased(),
+            source: opened.endpoint.source,
+            homeBaseDown: opened.endpoint.source != .home && candidates[0].0.source == .home
+        )
+        // Our own DOCK is whatever server we just connected to; the
+        // registry needs it by URL so a put aimed there is a plain
+        // store rather than a forward to ourselves.
+        await session.dockRegistry.configure(
+            ownDockUrl: "\(host):\(port)", ownClient: client, connect: connect
+        )
+        await session.refreshDockRegistry()
+        // The registry work suspends too, so the same question again
+        // before starting anything on a timer. What is closed here is
+        // the client this call built, never whatever ``liveFapi``
+        // holds now — by this point that may already belong to the
+        // identity that replaced us.
+        guard isCurrent(session, generation) else {
+            client.close()
+            if liveFapi === client { liveFapi = nil }
+            return
+        }
+        // Only now: a poller started before the registry knows where
+        // anything lives would spend its first passes fetching from
+        // nowhere.
+        startFetchScheduler(for: session, generation: generation)
+        // First moment the bar can actually get real numbers: the
+        // cached row went up at unlock, this replaces it. Living as
+        // the main, that refresh also brings the home this follows;
+        // as anyone else, the main's home is a lookup of its own.
+        Task { await refreshLiveFidInfo() }
+        if session.liveFid != session.mainFid {
+            Task { await followMainHomeBase(for: session) }
+        }
+        // …and the first moment the board is reachable, for an
+        // identity that asked to be told when somebody is waiting.
+        checkFirstFchBoardIfOptedIn()
+        SystemLog.shared.info(
+            SystemSource.fapi, "Connected to \(host):\(port)"
+        )
+    }
+
+    /// Whether the session a suspended operation was started for is
+    /// still the one the app is running — both that no lock or switch
+    /// has happened since (the generation), and that this is the object
+    /// the session is (the identity check, for a swap that somehow left
+    /// the count alone).
+    private func isCurrent(_ session: ActiveSession, _ generation: Int) -> Bool {
+        generation == sessionGeneration && session === activeSession
+    }
+
+    /// Retire the live transport: the next FAPI call opens a fresh
+    /// socket. For callers that learn the old one can't be trusted —
+    /// a wake, a network change, a successful connection test.
+    func markFapiStale() {
+        liveFapi?.markStale()
+    }
+
+    /// Retire **every** socket, not just the one to our own server.
+    ///
+    /// A wake or a network change kills each per-DOCK connection the
+    /// registry is holding exactly as it kills the main one, and a dead
+    /// one that is never dropped means a group whose messages stop
+    /// arriving until the app is relaunched.
+    private func markTransportsStale() {
+        liveFapi?.markStale()
+        guard let session = activeSession else { return }
+        Task { await session.dockRegistry.invalidateAllClients() }
+    }
+
+    // MARK: - home BASE
+
+    /// Look up the main FID's home and follow its BASE — for a session
+    /// living as some other FID, whose own refresh brings the wrong home.
+    private func followMainHomeBase(for session: ActiveSession) async {
+        // A FID with no record yet has no home, which is an answer; a
+        // lookup that failed is not one.
+        let freer: Freer?
+        do {
+            freer = try await session.directory.freer(byId: session.mainFid)
+        } catch {
+            return
+        }
+        await followHomeBase(for: session, home: freer?.home)
+    }
+
+    /// Move the live client to the BASE the main FID's home names, if it
+    /// names one, it checks out, and this device follows it.
+    ///
+    /// Each refusal below leaves the client where it is and says why in
+    /// ``homeBaseProblem``: a working connection is never given up for one
+    /// that has not proved itself. A lookup that merely failed says
+    /// nothing — the next refresh asks again.
+    private func followHomeBase(for session: ActiveSession, home: [String: String]?) async {
+        let generation = sessionGeneration
+        guard isCurrent(session, generation), !followingHomeBase,
+              let prefs = try? session.preferences.load()
+        else { return }
+        followingHomeBase = true
+        defer { followingHomeBase = false }
+
+        guard prefs.followsHomeBase else {
+            homeBaseProblem = nil
+            return
+        }
+        let sid: String
+        switch HomeBase.entry(in: home, prikey: try? session.mainPrikey()) {
+        case .none:
+            homeBaseProblem = nil
+            // The home no longer names a BASE: stop starting on the old one.
+            guard prefs.homeBaseService != nil else { return }
+            _ = try? session.preferences.update {
+                $0.homeBaseService = nil
+                $0.homeBaseServicePubkeyHex = nil
+            }
+            if baseConnection?.source == .home { await applyFapiSettings(for: session) }
+            return
+        case .address:
+            homeBaseProblem = "Your home BASE is an address, not a service id, so there is no record to check its key against. Choose the service in Home › BASE and carve again."
+            return
+        case .unreadable:
+            homeBaseProblem = "Your home BASE is private, and this FID's prikey does not open it."
+            return
+        case .serviceId(let found):
+            sid = found
+        }
+        let service: Service?
+        do {
+            service = try await session.directory.serviceById(sid)
+        } catch {
+            return
+        }
+        guard isCurrent(session, generation) else { return }
+        guard let service, let url = service.apiUrl, let endpoint = FudpUrl.hostPort(url) else {
+            homeBaseProblem = "Your home BASE \(sid.elidingMiddle(head: 6, tail: 6)) has no service record with an address on the chain."
+            return
+        }
+        let target = "\(endpoint.host):\(endpoint.port)"
+
+        // Already there — the Settings server and the home BASE are often
+        // the same machine. Check the key the session is already using,
+        // and remember the server as home so the next launch says so.
+        if let current = baseConnection, FudpUrl.normalize(current.service) == FudpUrl.normalize(target) {
+            guard let key = decodeHex(current.pubkeyHex),
+                  HomeBase.verify(helloPubkey: key, against: service) == .matches
+            else {
+                homeBaseProblem = "The server at \(target) does not hold the key your home BASE's record names."
+                return
+            }
+            homeBaseProblem = nil
+            if prefs.homeBaseService != target || prefs.homeBaseServicePubkeyHex != current.pubkeyHex {
+                _ = try? session.preferences.update {
+                    $0.homeBaseService = target
+                    $0.homeBaseServicePubkeyHex = current.pubkeyHex
+                }
+            }
+            baseConnection?.source = .home
+            baseConnection?.homeBaseDown = false
+            return
+        }
+
+        guard homeBaseSwitchGeneration != generation else { return }
+        let key: Data
+        do {
+            key = try await FudpDiscovery.discoverPubkey(
+                host: endpoint.host, port: endpoint.port, timeoutMs: 3_000
+            )
+        } catch {
+            homeBaseProblem = "Your home BASE \(target) is not answering, so this device stays on \(baseConnection?.service ?? "the server set below")."
+            return
+        }
+        switch HomeBase.verify(helloPubkey: key, against: service) {
+        case .matches:
+            break
+        case .mismatch:
+            homeBaseProblem = "The server at \(target) answered with a key its service record does not name. This Mac did not switch to it."
+            SystemLog.shared.warning(
+                SystemSource.fapi, "Home BASE \(target) failed its key check",
+                detail: "Answered with \(Hex.encode(key)); the record names something else."
+            )
+            return
+        case .unverifiable:
+            homeBaseProblem = "Your home BASE's service record names no dealer, so its key cannot be checked. This Mac did not switch to it."
+            return
+        }
+        guard let priv = try? session.mainPrikey() else { return }
+        do {
+            try await Self.probeBase(host: endpoint.host, port: endpoint.port, pubkey: key, prikey: priv)
+        } catch {
+            homeBaseProblem = "Your home BASE \(target) did not pass a health check (\(error)), so this device stays on \(baseConnection?.service ?? "the server set below")."
+            return
+        }
+        guard isCurrent(session, generation) else { return }
+
+        homeBaseProblem = nil
+        homeBaseSwitchGeneration = generation
+        do {
+            try session.preferences.update {
+                $0.homeBaseService = target
+                $0.homeBaseServicePubkeyHex = Hex.encode(key).lowercased()
+            }
+        } catch {
+            lastError = "Couldn't save your home BASE: \(error)"
+            return
+        }
+        SystemLog.shared.info(SystemSource.fapi, "Switching to your home BASE \(target)")
+        await applyFapiSettings(for: session)
+    }
+
+    /// One `base.health` round trip on a throwaway client: a server that
+    /// completes the handshake but cannot serve is not one to move to.
+    nonisolated static func probeBase(host: String, port: UInt16, pubkey: Data, prikey: Data) async throws {
+        let fudp = try await FudpClient(host: host, port: port, peerPubkey: pubkey, localPrivkey: prikey)
+        defer { fudp.close() }
+        let reply = try await FapiClient(fudp: fudp).call(
+            api: "base.health",
+            params: nil, fcdsl: nil, binary: nil,
+            sid: nil, via: nil, maxCost: nil,
+            timeoutMs: 5_000
+        )
+        guard reply.response.isSuccess else {
+            throw BaseProbeFailure(code: reply.response.code ?? -1, message: reply.response.message ?? "")
+        }
+    }
+
+    // MARK: - helpers
+
+    /// Parse "host:port" → (host, port). Tolerant of IPv6-style
+    /// `[::1]:8500` not yet — colon-split with `lastIndex(of:)` is
+    /// good enough for the localhost / hostname / IPv4 cases.
+    private func parseHostPort(_ s: String) -> (String, UInt16)? {
+        guard let colon = s.lastIndex(of: ":") else { return nil }
+        let host = String(s[s.startIndex..<colon])
+        let portStr = String(s[s.index(after: colon)..<s.endIndex])
+        guard let port = UInt16(portStr) else { return nil }
+        return (host, port)
+    }
+
+    /// Tiny inline hex parser. Returns nil on any malformed input.
+    /// Pulled inline because adding a public Data(hex:) extension
+    /// in FCCore would conflict with the test-only one — keeping
+    /// the API surface clean for now.
+    private func decodeHex(_ s: String) -> Data? {
+        guard s.count % 2 == 0 else { return nil }
+        var data = Data(capacity: s.count / 2)
+        var idx = s.startIndex
+        while idx < s.endIndex {
+            let next = s.index(idx, offsetBy: 2)
+            guard let b = UInt8(s[idx..<next], radix: 16) else { return nil }
+            data.append(b)
+            idx = next
+        }
+        return data
+    }
+
+    // MARK: - live-FID switching
+
+    func switchLive(fid: String) {
+        guard let session = activeSession else { return }
+        do {
+            try session.switchLive(fid: fid)
+            liveFid = session.liveFid
+            // Sitting on Mail and switching to a watch-only identity
+            // would otherwise leave the selection on a pane the sidebar
+            // has just greyed out — a detail view with no way back to
+            // it, since the row that owns the selection is no longer
+            // clickable. Overview is always open, to every kind.
+            if selectedPane.needsKey && !session.canSign {
+                selectedPane = .overview
+            }
+            // The new identity's numbers are a different set entirely,
+            // so show its cached row at once and go get a fresh one.
+            loadCachedLiveFidInfo()
+            Task { await refreshLiveFidInfo() }
+            // A different identity opted in, or did not, and has its own
+            // cursor — so the previous one's count means nothing here.
+            newcomersWaiting = 0
+            checkFirstFchBoardIfOptedIn()
+        } catch {
+            lastError = String(describing: error)
+        }
+    }
+
+    /// Re-read `liveFid` from the session after something *else*
+    /// changed it — removing the sub-identity you were living as, which
+    /// drops the session back to the main from inside ``ActiveSession``.
+    /// Without this the toolbar and every `.id(liveFid)` keep the FID
+    /// the Setting no longer holds.
+    func syncLiveFid() {
+        guard let session = activeSession else { return }
+        guard liveFid != session.liveFid else { return }
+        liveFid = session.liveFid
+        if selectedPane.needsKey && !session.canSign {
+            selectedPane = .overview
+        }
+        loadCachedLiveFidInfo()
+        Task { await refreshLiveFidInfo() }
+    }
+
+    // MARK: - live FID on-chain stats
+
+    /// Render the stored row for the live FID immediately, without
+    /// touching the network.
+    private func loadCachedLiveFidInfo() {
+        guard let session = activeSession else { return }
+        liveFidInfoError = nil
+        liveFidInfoConfirmed = false
+        liveFidInfo = session.cachedLiveFidInfo()
+    }
+
+    /// The live key's prikey is published: say so once, loudly. The FID bar
+    /// keeps a banner for as long as it stays the live identity.
+    private func noteIfLiveKeyIsNobody(_ info: LiveFidInfo?) {
+        guard let session = activeSession, info?.isNobody == true else { return }
+        let fid = session.liveFid
+        NobodyRegistry.shared.markNobodies([fid])
+        Task { @MainActor in NobodyGate.alertOwnKeyIfNeeded(fid) }
+    }
+
+    /// Set when a pane asks for the private-key backup sheet. ``HomeView`` owns
+    /// the sheet — one presented from inside a pane or a popover dies with it —
+    /// so it watches this and clears it, the same one-shot shape as
+    /// ``pendingChatMode``.
+    private(set) var backupPrikeyRequested = false
+
+    func openBackupPrikey() { backupPrikeyRequested = true }
+
+    /// Same one-shot shape, for the Set master sheet ``HomeView`` owns.
+    private(set) var setMasterRequested = false
+
+    func openSetMaster() { setMasterRequested = true }
+
+    func consumeSetMasterRequest() { setMasterRequested = false }
+
+    func consumeBackupPrikeyRequest() { backupPrikeyRequested = false }
+
+    /// Record that the user has taken a copy of their private key, and stop the
+    /// nudge. Only ``BackupPrikeySheet``'s "I have my copy" calls this — the
+    /// flag is the user's assertion, not ours, so merely opening the sheet must
+    /// not set it.
+    func markPrikeyBackedUp() {
+        guard let session = activeSession else { return }
+        do {
+            try session.markPrikeyBackedUp()
+            prikeyBackedUp = true
+        } catch {
+            lastError = String(describing: error)
+        }
+    }
+
+    func skipOnboardingStep(_ step: OnboardingStep) {
+        guard let session = activeSession else { return }
+        do {
+            try session.skipOnboardingStep(step)
+            onboardingSkipped = session.onboardingSkipped
+        } catch {
+            lastError = String(describing: error)
+        }
+    }
+
+    func markOnboardingStarted() {
+        guard let session = activeSession, !onboardingStarted else { return }
+        do {
+            try session.markOnboardingStarted()
+            onboardingStarted = true
+        } catch {
+            lastError = String(describing: error)
+        }
+    }
+
+    func markOnboardingCompleted() {
+        guard let session = activeSession, !onboardingCompleted else { return }
+        do {
+            try session.markOnboardingCompleted()
+            onboardingCompleted = true
+        } catch {
+            lastError = String(describing: error)
+        }
+    }
+
+    /// The live FID's record once the chain has answered for it in this
+    /// session. The cached row from an earlier launch would tick or untick
+    /// steps on stale data; and unlike ``liveFidIsBroke`` this does not go
+    /// blank while a later refresh is in flight, or the checklist would
+    /// fold every time Overview appears.
+    var knownLiveFidInfo: LiveFidInfo? {
+        liveFidInfoConfirmed ? liveFidInfo : nil
+    }
+
+    private(set) var liveFidInfoConfirmed = false
+
+    /// Tell every view rendering the live `KeyInfo` to re-read it.
+    func bumpIdentityRevision() { identityRevision += 1 }
+
+    private func clearLiveFidInfo() {
+        liveFidInfo = nil
+        liveFidInfoConfirmed = false
+        liveFidInfoLoading = false
+        liveFidInfoError = nil
+    }
+
+    /// Re-fetch the live FID's on-chain record. Safe to call from
+    /// anywhere that just changed the identity's money — a send, a
+    /// carve, the bar's refresh button.
+    ///
+    /// Overlapping calls are dropped rather than queued: the second
+    /// answer would overwrite the first with the same chain state.
+    func refreshLiveFidInfo() async {
+        guard let session = activeSession, !liveFidInfoLoading else { return }
+        let fidAtStart = session.liveFid
+        liveFidInfoLoading = true
+        liveFidInfoError = nil
+        defer { liveFidInfoLoading = false }
+        do {
+            let info = try await session.refreshLiveFidInfo()
+            // The user can switch identity while the call is in flight;
+            // dropping a late answer for the previous FID keeps the bar
+            // from briefly showing the wrong identity's balance.
+            guard session.liveFid == fidAtStart else { return }
+            liveFidInfo = info
+            liveFidInfoConfirmed = true
+            noteIfLiveKeyIsNobody(info)
+            // A home.CALL set or removed, here or on another device, is
+            // what incoming calls are now checked against.
+            callCenter.ownHomeChanged(info.home)
+            // Alongside, not inline: a HELLO and a health probe to a new
+            // server are no reason to hold the bar's spinner.
+            if session.liveFid == session.mainFid {
+                Task { await followHomeBase(for: session, home: info.home) }
+            }
+        } catch {
+            guard session.liveFid == fidAtStart else { return }
+            liveFidInfoError = String(describing: error)
+        }
+    }
+}
+
+/// The server the live FAPI client reads the chain through.
+struct BaseConnection: Equatable {
+    /// `"<host>:<port>"`.
+    var service: String
+    var pubkeyHex: String
+    var source: BaseEndpoint.Source
+    /// On the Settings server only because the home BASE did not answer.
+    var homeBaseDown: Bool
+}
+
+struct BaseProbeFailure: Error, CustomStringConvertible {
+    let code: Int
+    let message: String
+    var description: String { "server replied code \(code): \(message)" }
+}
+
+/// Why a DOCK we were asked to reach could not be connected to.
+enum DockConnectFailure: Error, CustomStringConvertible {
+    case unusableUrl(String)
+
+    var description: String {
+        switch self {
+        case .unusableUrl(let url):
+            return "DOCK address '\(url)' does not name a host we can reach"
+        }
+    }
+}
+
+/// Stub ``FapiCalling`` used until the real FAPI server pubkey is wired.
+/// Every call throws so a buggy view can't accidentally pretend it
+/// got valid network data.
+struct StubFapiClient: FapiCalling, Sendable {
+    func call(
+        api: String, params: Data?, fcdsl: Data?, binary: Data?,
+        sid: String?, via: String?, maxCost: Int64?, timeoutMs: Int
+    ) async throws -> FapiClient.Reply {
+        throw StubError.notConfigured(api: api)
+    }
+    enum StubError: Error, CustomStringConvertible {
+        case notConfigured(api: String)
+        var description: String {
+            switch self {
+            case .notConfigured(let api):
+                return "FAPI not yet configured (call: \(api)). Wire a real FapiClient in Phase 6."
+            }
+        }
+    }
+}

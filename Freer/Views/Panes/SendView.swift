@@ -1,0 +1,417 @@
+import SwiftUI
+import FCCore
+import FCDomain
+import FCUI
+
+/// The Send pane: one act at two depths. **Send** pays someone and makes
+/// every other decision for you; **Advanced** (``CreateTxView``) hands
+/// those decisions back — inputs, several outputs, a message, a lock.
+///
+/// **Advanced is a button beside Send, not a tab above it.** You reach
+/// for it on finding that Send's answers are wrong, and that happens
+/// while filling this form in — not before you start, which is the only
+/// moment a tab strip above the form is any use.
+struct SendView: View {
+    @Environment(AppState.self) private var appState
+    let session: ActiveSession
+
+    enum Mode: String, CaseIterable, Identifiable {
+        case send = "Send"
+        case compose = "Compose"
+        var id: String { rawValue }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            PaneHeader(session: session)
+            Divider()
+
+            switch appState.sendMode {
+            case .send:
+                SendPaymentView(session: session)
+            case .compose:
+                CreateTxView(session: session)
+            }
+        }
+        .padding()
+        // The minimum width belongs here, on the pane, exactly as
+        // ``SettingsView`` has it — not on the nested form view.
+        .sheetFrame(minWidth: 480)
+    }
+}
+
+/// Build, sign, and broadcast an FCH transaction from the live FID.
+///
+/// Flow: enter recipient + amount + fee → confirm → `session.sendFromLive`
+/// (refresh UTXOs → greedy select → build → sign each P2PKH input →
+/// `base.broadcastTx`). The signed tx never leaves the Mac unsigned.
+///
+/// Watch-only FIDs get the cold-sign fallback instead: the same
+/// snapshot + coin selection produces a ``RawTxInfo`` document
+/// (Android `CreateTxActivity`'s import format) exported via copy /
+/// file / multi-part QR, to be signed where the key lives.
+struct SendPaymentView: View {
+    @Environment(AppState.self) private var appState
+    let session: ActiveSession
+
+    @State private var recipientFid: String = ""
+    @State private var amountBch: String = ""
+    @State private var feePerByte: String = "1"
+
+    @State private var sending: Bool = false
+    @State private var sendError: String?
+    @State private var result: WalletService.SendResult?
+    @State private var unsigned: WalletService.UnsignedSendResult?
+
+    @State private var showConfirm: Bool = false
+    @State private var showScan: Bool = false
+    @State private var showUnsigned: Bool = false
+    @State private var pick: FidPickerRequest?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            if !session.canSign {
+                watchOnlyBanner
+            }
+
+            // **The ScrollView is what keeps this pane inside the
+            // window.** Left bare, this Form lays out twice: once
+            // correctly at the 487pt it is offered, then again at its
+            // full intrinsic 1215pt, which makes the pane 1391pt inside
+            // a 715pt window. SwiftUI centres a child too big for its
+            // slot, so ~286pt — the FID bar and the top of the form —
+            // ends up above the window's top edge, with no scroller to
+            // reach it. A ScrollView clamps to the height it is offered
+            // instead, which is the one thing every pane that behaves
+            // (Overview, Convert, Tools) has in common.
+            //
+            // Do not add `.fixedSize(horizontal: false, vertical: true)`
+            // to the form. It forces that same intrinsic height back and
+            // hands the scroller the whole of it, so there is again
+            // nothing left to scroll — measured at 1738pt against a
+            // 532pt window.
+            // On iOS a grouped `Form` is itself the scroller — and inside a
+            // `ScrollView` it is offered no height and draws nothing at all.
+            form
+        }
+        // No minimum width on this inner view: it is the one structural
+        // difference from ``SettingsView``, whose pane sits at the
+        // height it is offered. A minimum here can have the form
+        // measured at 580pt wide rather than the ~890pt it is actually
+        // given, and a narrower form is a taller one.
+        .alert("Send \(formatBch(amountSatoshis ?? 0)) FCH?",
+               isPresented: $showConfirm) {
+            Button("Cancel", role: .cancel) {}
+            Button("Send", role: .destructive) {
+                Task { await runSend() }
+            }
+        } message: {
+            Text("To: \(recipientFid)\(recipientContactLabel.map { " (\($0))" } ?? "")\nFee rate: \(feePerByte) sat/byte\n\nThis broadcasts immediately and cannot be undone.")
+        }
+        .sheet(isPresented: $showScan) {
+            QrScanSheet(title: "Scan recipient FID") { scanned in
+                recipientFid = scanned
+                showScan = false
+            } onCancel: {
+                showScan = false
+            }
+        }
+        .sheet(item: $pick) { request in
+            FidPickerSheet(session: session, request: request) { picked in
+                if let one = picked.first { recipientFid = one.fid }
+                pick = nil
+            } onCancel: {
+                pick = nil
+            }
+        }
+        .sheet(isPresented: $showUnsigned) {
+            if let unsigned {
+                UnsignedTxSheet(result: unsigned) { showUnsigned = false }
+            }
+        }
+    }
+
+    private var watchOnlyBanner: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "eye")
+            CopyableText("Watch-only — this FID has no prikey. Build the transaction here, then export the unsigned document (copy / file / QR) and sign it on the machine that holds the key.")
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .font(.callout)
+        .foregroundStyle(.orange)
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.orange.opacity(0.1))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
+    private var form: some View {
+        Form {
+            Section {
+                LabeledField(
+                    "Recipient FID",
+                    hint: (!recipientFid.isEmpty && !recipientLooksValid)
+                        ? "Not a valid FCH mainnet address."
+                        : recipientContactLabel.map { "In your contacts as: \($0)" },
+                    hintIsError: !recipientFid.isEmpty && !recipientLooksValid
+                ) {
+                    HStack(spacing: 8) {
+                        TextField("", text: $recipientFid, prompt: Text("F…"))
+                            .font(.system(.body, design: .monospaced))
+                            .fieldInputStyle()
+
+                        Button {
+                            pick = .one(
+                                title: "Who is this payment for?",
+                                subtitle: "Search your contacts, or look up a FID or CID on chain. Check the address before you send — a payment cannot be undone."
+                            )
+                        } label: {
+                            Image(systemName: "person.text.rectangle")
+                        }
+                        .help("Find the recipient in contacts or on chain")
+
+                        Button {
+                            showScan = true
+                        } label: {
+                            Image(systemName: "qrcode.viewfinder")
+                        }
+                        .help("Scan the recipient FID from a QR code (camera or image files)")
+                    }
+                }
+            } header: {
+                Text("To")
+            }
+
+            Section {
+                LabeledField(
+                    "Amount",
+                    hint: amountSatoshis.map { "= \($0) sat" }
+                ) {
+                    HStack(spacing: 8) {
+                        TextField("", text: $amountBch, prompt: Text("0.001"))
+                            .fieldInputStyle()
+                            .frame(maxWidth: 200)
+                        Text("FCH").foregroundStyle(.secondary)
+                    }
+                }
+
+                LabeledField("Fee rate") {
+                    HStack(spacing: 8) {
+                        TextField("", text: $feePerByte, prompt: Text("1"))
+                            .fieldInputStyle()
+                            .frame(maxWidth: 80)
+                        Text("sat/byte").foregroundStyle(.secondary)
+                    }
+                }
+            } header: {
+                Text("Amount")
+            }
+
+            if let result {
+                Section("Sent") { resultRows(result) }
+            } else if let err = sendError {
+                Section {
+                    CopyableText(err, font: .callout)
+                        .foregroundStyle(.red)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            Section {
+                HStack(spacing: 10) {
+                    Spacer()
+
+                    // The escape hatch, kept next to the act it widens
+                    // rather than above it: you reach for Advanced when
+                    // Send's answers are wrong, which is something you
+                    // discover while filling this form in — not a peer
+                    // view to choose between before you start.
+                    Button {
+                        appState.sendMode = .compose
+                    } label: {
+                        Text("Advanced").frame(width: 100)
+                    }
+                    .help("Compose the transaction by hand — choose the coins, pay several people at once, add a message or a time lock.")
+
+                    if session.canSign {
+                        Button {
+                            sendError = nil
+                            result = nil
+                            // With the global confirmation on, the
+                            // approval dialog is about to show the
+                            // *built* transaction — inputs, fee,
+                            // change and all. Asking twice, the
+                            // second time with better information,
+                            // trains people to click through the
+                            // first one.
+                            if session.confirmBeforeSigning {
+                                Task { await runSend() }
+                            } else {
+                                showConfirm = true
+                            }
+                        } label: {
+                            if sending {
+                                HStack(spacing: 6) {
+                                    ProgressView().controlSize(.small)
+                                    Text("Sending…")
+                                }
+                                .frame(width: 120)
+                            } else {
+                                Text("Send").frame(width: 120)
+                            }
+                        }
+                        .keyboardShortcut(.defaultAction)
+                        .buttonStyle(.borderedProminent)
+                        .disabled(!canSubmit)
+                    } else {
+                        // Cold-sign path: nothing is broadcast, so no
+                        // confirm alert — building is free to redo.
+                        Button {
+                            Task { await runBuildUnsigned() }
+                        } label: {
+                            if sending {
+                                HStack(spacing: 6) {
+                                    ProgressView().controlSize(.small)
+                                    Text("Building…")
+                                }
+                                .frame(width: 160)
+                            } else {
+                                Text("Build unsigned tx").frame(width: 160)
+                            }
+                        }
+                        .keyboardShortcut(.defaultAction)
+                        .buttonStyle(.borderedProminent)
+                        .disabled(!canSubmit)
+                        .help("Select coins and build the transaction without signing — export it for cold signing.")
+                    }
+                }
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    @ViewBuilder
+    private func resultRows(_ r: WalletService.SendResult) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                Text("Broadcast accepted").bold()
+            }
+            CopyableText(
+                display: "txid: \(r.remoteTxid)",
+                copy: r.remoteTxid,
+                font: .system(.caption, design: .monospaced)
+            )
+            .lineLimit(1)
+            .truncationMode(.middle)
+
+            let summary = "\(r.plan.selected.count) input(s) · fee \(r.plan.fee) sat · \(r.plan.estimatedSize) B" +
+                (r.plan.hasChange ? " · change \(r.plan.change) sat" : " · no change")
+            CopyableText(summary, font: .caption.monospaced())
+                .foregroundStyle(.secondary)
+
+            if r.remoteTxid != r.transaction.txidDisplay {
+                CopyableText(
+                    "Local txid: \(r.transaction.txidDisplay) — server returned a different value.",
+                    font: .caption
+                )
+                .foregroundStyle(.orange)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    // MARK: - validation
+
+    /// The label the recipient has in Contacts, checked against before a payment that cannot be undone.
+    private var recipientContactLabel: String? {
+        let fid = recipientFid.trimmingCharacters(in: .whitespacesAndNewlines)
+        return fid.isEmpty ? nil : ContactLabels.current?.label(for: fid)
+    }
+
+    private var recipientLooksValid: Bool {
+        (try? FchAddress(fid: recipientFid)) != nil
+    }
+
+    /// Parse `amountBch` as a decimal FCH amount and convert to
+    /// satoshis. Returns nil if blank, malformed, ≤ 0, or > 21M FCH
+    /// (which would overflow the Int64 cast in practice but mostly
+    /// catches finger-trouble).
+    private var amountSatoshis: Int64? {
+        guard !amountBch.isEmpty,
+              let bch = Double(amountBch),
+              bch > 0,
+              bch < 21_000_000
+        else { return nil }
+        return Int64((bch * Double(Cash.satoshisPerBch)).rounded())
+    }
+
+    private var feeRate: Int64? {
+        guard let n = Int64(feePerByte), n > 0 else { return nil }
+        return n
+    }
+
+    private var canSubmit: Bool {
+        !sending &&
+        recipientLooksValid &&
+        amountSatoshis != nil &&
+        feeRate != nil
+    }
+
+    // MARK: - run
+
+    @MainActor
+    private func runSend() async {
+        guard let amount = amountSatoshis, let fee = feeRate else { return }
+        sending = true
+        sendError = nil
+        result = nil
+        defer { sending = false }
+        do {
+            let r = try await session.sendFromLive(
+                to: recipientFid,
+                amount: amount,
+                feePerByte: fee
+            )
+            result = r
+            // The FID bar's numbers are now wrong by the amount just
+            // sent. The chain index only catches up when the tx
+            // confirms, so this may well come back unchanged — but the
+            // pass costs one call and the alternative is a balance that
+            // stays stale until the user thinks to hit refresh.
+            await appState.refreshLiveFidInfo()
+        } catch {
+            sendError = String(describing: error)
+        }
+    }
+
+    /// Watch-only path: same snapshot + coin selection as a real
+    /// send, but the output is a `RawTxInfo` export instead of a
+    /// broadcast.
+    @MainActor
+    private func runBuildUnsigned() async {
+        guard let amount = amountSatoshis, let fee = feeRate else { return }
+        sending = true
+        sendError = nil
+        result = nil
+        defer { sending = false }
+        do {
+            unsigned = try await session.buildUnsignedSendFromLive(
+                to: recipientFid,
+                amount: amount,
+                feePerByte: fee
+            )
+            showUnsigned = true
+        } catch {
+            sendError = String(describing: error)
+        }
+    }
+
+    private func formatBch(_ sats: Int64) -> String {
+        let f = NumberFormatter()
+        f.minimumFractionDigits = 0
+        f.maximumFractionDigits = 8
+        let bch = Double(sats) / Double(Cash.satoshisPerBch)
+        return f.string(from: NSNumber(value: bch)) ?? "0"
+    }
+}

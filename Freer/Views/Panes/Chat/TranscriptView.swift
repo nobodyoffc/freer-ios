@@ -1,0 +1,807 @@
+import SwiftUI
+import UIKit
+import FCCore
+import FCDomain
+import FCUI
+
+/// The messages of one conversation.
+///
+/// The transcript itself is the one part of the pane that genuinely is
+/// the same for all four flavours: a bubble, who said it, when, and what
+/// happened to it. Everything that differs — who may be here, what
+/// sealing applies, what the menu offers — was decided before this view
+/// is reached, which is why it takes a ``ChatModeStyle`` only to tint
+/// its own chrome and never to branch on.
+struct TranscriptView: View {
+
+    @Environment(\.inspectFid) private var inspectFid
+
+    let session: ActiveSession
+    let style: ChatModeStyle
+    let conversation: Conversation
+    let page: MessagesStore.Page
+    let player: VoicePlayer
+    /// Who the FIDs in this transcript are. Read-only here — the pane
+    /// owns it and fills it as threads are opened.
+    let names: ChatNameBook
+
+    let onLoadOlder: () -> Void
+    /// Files being fetched or that failed to, by data id. The pane runs
+    /// the transfers; the card only draws where each one stands.
+    let downloads: [String: ChatFileDownload]
+    let onDownload: (ImMessage) -> Void
+    /// Ask the members for one symkey version. The pane owns the sheet,
+    /// so the row only names what it needs.
+    let onAskForKey: (Int64) -> Void
+    /// Put one of our sent messages in the composer for editing.
+    var onEdit: (ImMessage) -> Void = { _ in }
+    /// Ask to withdraw one of our sent messages. The pane confirms.
+    var onWithdraw: (ImMessage) -> Void = { _ in }
+
+    /// The empty row pinned under the last bubble. Scrolling to a bubble
+    /// would stop at the top of a tall one; scrolling here always lands
+    /// on the true end of the transcript.
+    private static let bottomAnchor = "transcript.bottom"
+
+    /// The conversation whose end we have already landed on. A jump
+    /// within a transcript that is already on screen animates; the first
+    /// landing in one that is merely being opened does not, so a thread
+    /// *starts* at its newest message instead of animating down to it in
+    /// front of the user.
+    ///
+    /// Keyed by conversation rather than a flag, so it cannot be left
+    /// true from the previous thread by whichever `onChange` SwiftUI
+    /// happens to run first on a switch.
+    @State private var settledIn: String?
+
+    /// The file record the ⓘ is showing, if any.
+    @State private var inspecting: Hat?
+
+    /// The message whose earlier versions are showing, by id.
+    @State private var historyFor: String?
+
+    /// The speaker's circle, and the gutter every bubble in their run
+    /// is indented by. One constant so the two cannot drift apart and
+    /// leave a run stepping sideways at its second message.
+    private static let avatarSize: CGFloat = 30
+
+    var body: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 10) {
+                    if page.hasOlder {
+                        Button("Load earlier messages", action: onLoadOlder)
+                            .buttonStyle(.borderless)
+                            .font(.caption)
+                    }
+                    ForEach(Array(page.messages.enumerated()), id: \.element.id) { index, message in
+                        if message.isWithdrawn {
+                            withdrawnRow(message)
+                        } else {
+                            bubble(message, after: index > 0 ? page.messages[index - 1] : nil)
+                        }
+                    }
+                    if page.messages.isEmpty {
+                        Text("Nothing said here yet.")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                            .padding(.vertical, 20)
+                    }
+                    Color.clear
+                        .frame(height: 1)
+                        .id(Self.bottomAnchor)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(12)
+            }
+            // A lazy stack measures only the rows it has realised and
+            // guesses the height of the rest from those. One very long
+            // message poisons that guess for every row still off screen,
+            // so the offset a one-shot `scrollTo` computes on the way in
+            // overshoots the true end of the transcript — and once the
+            // rows behind it realise at their real, shorter heights the
+            // content ends above the viewport and the pane shows a long
+            // blank instead of the newest messages.
+            //
+            // The anchor is a layout rule rather than an offset: the
+            // scroll view re-pins to the end of the content every time
+            // it measures differently, which is exactly what happens as
+            // those estimates are replaced by real heights.
+            .defaultScrollAnchor(.bottom)
+            // One scroll view per thread. A reused one carries the
+            // previous transcript's offset *and* its height estimates
+            // into the new one, which is the same overshoot by another
+            // route; the anchor only places content it is laying out for
+            // the first time.
+            .id(conversation.id)
+            // The newest message, not the count: loading *earlier* pages
+            // grows the list too, and yanking the view to the bottom
+            // there would undo what the user just asked for.
+            .onChange(of: newestId, initial: true) { _, _ in
+                scrollToBottom(proxy)
+            }
+            .onChange(of: conversation.id) { _, _ in
+                scrollToBottom(proxy)
+            }
+        }
+        .background(Color(NSColor.textBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .sheet(item: $inspecting) { hat in
+            HatDetailSheet(session: session, hat: hat) { inspecting = nil }
+        }
+    }
+
+    /// What the user thinks of as "the latest message" — a new one sent
+    /// or received changes this; a status flipping to Sent does not.
+    private var newestId: String? {
+        page.messages.last?.id
+    }
+
+    private func scrollToBottom(_ proxy: ScrollViewProxy) {
+        // The row that triggered this doesn't exist in the lazy stack yet
+        // on the turn the page changes, so the scroll is asked for once
+        // that layout pass is behind us.
+        let id = conversation.id
+        Task { @MainActor in
+            if settledIn == id {
+                withAnimation(.easeOut(duration: 0.2)) {
+                    proxy.scrollTo(Self.bottomAnchor, anchor: .bottom)
+                }
+            } else {
+                proxy.scrollTo(Self.bottomAnchor, anchor: .bottom)
+                settledIn = id
+            }
+        }
+    }
+
+    // MARK: - bubbles
+
+    /// The FID behind an incoming message.
+    ///
+    /// A P2P message that arrived without a `senderId` can only have
+    /// come from the one party the thread is with, so the thread's own
+    /// target stands in. A group message cannot be repaired that way:
+    /// the target of a room, a team or a square is a room id or a txid,
+    /// and handing one of those to ``AvatarMaker`` would composite a
+    /// face out of a transaction. Nil, and the row draws the neutral
+    /// stand-in instead.
+    private func senderFid(of message: ImMessage) -> String? {
+        if let sender = message.senderId, !sender.isEmpty { return sender }
+        return conversation.type == .p2p ? conversation.targetId : nil
+    }
+
+    /// How long a silence ends a run. Past this, the next message is a
+    /// fresh remark rather than the same breath, and it gets its own
+    /// face and name.
+    ///
+    /// **Not only a tidiness rule.** Without it a run has no upper
+    /// bound: five messages sent across two days from one person are
+    /// one run, so the four after the first are anonymous, and a
+    /// transcript scrolled back to them shows nobody at all. Fifteen
+    /// minutes is the usual chat-app figure and it does the job here —
+    /// consecutive typing stays grouped, and coming back later does not.
+    private static let runGap: Int64 = 15 * 60 * 1000
+
+    /// Whether this message starts a new speaker's run, and so earns a
+    /// face and a name of its own.
+    private func opens(
+        _ message: ImMessage, mine: Bool, sender: String?, after previous: ImMessage?
+    ) -> Bool {
+        guard let previous else { return true }
+        if previous.isOutgoing(from: session.liveFid) != mine { return true }
+        if senderFid(of: previous) != sender { return true }
+        // An unstamped message cannot be shown to be *close* to the one
+        // before it, so it is not assumed to be: it opens a run. The
+        // cost of being wrong is a repeated avatar; the cost the other
+        // way is a bubble with no attribution at all.
+        guard let then = previous.timestamp, let now = message.timestamp else { return true }
+        return now - then > Self.runGap
+    }
+
+    private func bubble(_ message: ImMessage, after previous: ImMessage?) -> some View {
+        let mine = message.isOutgoing(from: session.liveFid)
+        let sender = senderFid(of: message)
+        // One person saying three things in a row is one person. Only
+        // the first of a run is badged and given a face; the rest are
+        // indented to the same place, so a P2P transcript does not turn
+        // into a column of the same avatar repeated forty times while a
+        // room still names every change of speaker.
+        let opensRun = opens(message, mine: mine, sender: sender, after: previous)
+        return HStack(alignment: .top, spacing: 8) {
+            if mine {
+                Spacer(minLength: 40)
+            } else if opensRun {
+                // Every flavour, including P2P. The thread header names
+                // the one person a P2P chat is with, but a transcript
+                // read from the middle — scrolled back, or glanced at
+                // after switching threads — has no header in view, and
+                // the face is the fastest answer to "whose words are
+                // these" that a screen can give.
+                // The face is also the way in: a transcript is where
+                // you most often want to know who a stranger *is*, and
+                // clicking the one thing already identifying them is
+                // the gesture that needs no explaining.
+                Button { inspectFid(sender ?? "") } label: {
+                    FidAvatarView(
+                        fid: sender ?? "",
+                        size: Self.avatarSize,
+                        isNobody: sender.map(names.isNobody) ?? false
+                    )
+                }
+                .buttonStyle(.plain)
+                .disabled(sender == nil)
+                .help("Show this FID's details, standing and ratings")
+            } else {
+                Color.clear.frame(width: Self.avatarSize, height: 1)
+            }
+            VStack(alignment: mine ? .trailing : .leading, spacing: 3) {
+                if !mine, opensRun, let sender {
+                    HStack(spacing: 6) {
+                        ChatIdentityTag(
+                            fid: sender,
+                            cid: names.cid(of: sender) ?? message.senderName,
+                            tint: style.tint
+                        )
+                        // Who the user knows the sender as, beside the tag
+                        if let label = names.contactLabel(of: sender) {
+                            Text(label)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                    }
+                    .contextMenu {
+                        Button("Show FID details") { inspectFid(sender) }
+                    }
+                }
+                body(of: message)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 7)
+                    .background(
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill(mine ? style.tint.opacity(0.18)
+                                       : Color(NSColor.controlBackgroundColor))
+                    )
+                    .contextMenu { messageMenu(message, mine: mine) }
+                HStack(spacing: 4) {
+                    if let time = message.timestamp {
+                        Text(ChatFormat.shortTime.string(from: Date(timeIntervalSince1970: Double(time) / 1000)))
+                    }
+                    if message.isEdited, let history = message.editHistory, !history.isEmpty {
+                        Button("edited") { historyFor = message.id }
+                            .buttonStyle(.borderless)
+                            .font(.caption2)
+                            .pointingHand()
+                            .help("Show what this message said before")
+                            .popover(isPresented: Binding(
+                                get: { historyFor != nil && historyFor == message.id },
+                                set: { if !$0 { historyFor = nil } }
+                            )) {
+                                EditHistoryView(message: message, history: history)
+                            }
+                    }
+                    if mine { statusLabel(message) }
+                    // Visible, not only on right-click: a right-click on
+                    // selectable text opens the text's own menu instead.
+                    if copyable(message) != nil
+                        || (mine && session.chat.canAmend(message, as: session.liveFid)) {
+                        Menu { messageMenu(message, mine: mine) } label: {
+                            Image(systemName: "ellipsis.circle")
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                        }
+                        // A plain button, not `.borderlessButton`: that one is
+                        // drawn as a native pop-up that picks its own colour,
+                        // so it ignored the grey the time beside it is in.
+                        .menuStyle(.button)
+                        .buttonStyle(.plain)
+                        .menuIndicator(.hidden)
+                        .fixedSize()
+                        .help(mine ? "Copy, edit or withdraw — editing and withdrawing are possible for 10 minutes after sending"
+                                   : "Copy")
+                    }
+                    if !mine, message.status == .imported {
+                        // Live messages are signed by their author and
+                        // checked on arrival; a history file carries no
+                        // signatures, so who wrote these rests on whoever
+                        // shared the file.
+                        Label("Unverified", systemImage: "questionmark.circle")
+                            .help("Imported from shared history. History carries no signatures, so the sender shown can't be proven.")
+                    }
+                }
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+            }
+            if !mine { Spacer(minLength: 40) }
+        }
+    }
+
+    /// The right-click menu on a bubble. Edit and Withdraw appear only on
+    /// our own messages, and only inside the window; the service checks
+    /// again when one is chosen, since a menu can stay open past it.
+    @ViewBuilder
+    private func messageMenu(_ message: ImMessage, mine: Bool) -> some View {
+        if let copy = copyable(message) {
+            Button(copy.label) {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(copy.text, forType: .string)
+            }
+        }
+        if mine, session.chat.canAmend(message, as: session.liveFid) {
+            amendItems(message)
+        }
+    }
+
+    /// What Copy puts on the pasteboard: a text message's text, or a file
+    /// share's HAT JSON. Nothing for a sealed row, and nothing for a nobody's
+    /// file card, which is never drawn as something to act on.
+    private func copyable(_ message: ImMessage) -> (label: String, text: String)? {
+        guard !message.isWithdrawn, let content = message.content, !content.isEmpty else { return nil }
+        switch message.contentType {
+        case .text:
+            return ("Copy", content)
+        case .hat:
+            let fromNobody = !message.isOutgoing(from: session.liveFid)
+                && senderFid(of: message).map(names.isNobody) == true
+            return fromNobody ? nil : ("Copy HAT JSON", content)
+        default:
+            return nil
+        }
+    }
+
+    @ViewBuilder
+    private func amendItems(_ message: ImMessage) -> some View {
+        if MessageAmend.isEditable(message) {
+            Button("Edit") { onEdit(message) }
+        }
+        Button("Withdraw…", role: .destructive) { onWithdraw(message) }
+    }
+
+    /// A message its author withdrew: a centred line where the bubble was.
+    private func withdrawnRow(_ message: ImMessage) -> some View {
+        let mine = message.isOutgoing(from: session.liveFid)
+        let who: String
+        if mine {
+            who = "You withdrew a message"
+        } else if conversation.type == .p2p {
+            who = "Message withdrawn"
+        } else {
+            let fid = senderFid(of: message) ?? ""
+            who = "\(names.cid(of: fid) ?? fid.elidingMiddle()) withdrew a message"
+        }
+        let when = message.timestamp.map {
+            " · " + ChatFormat.shortTime.string(from: Date(timeIntervalSince1970: Double($0) / 1000))
+        } ?? ""
+        return Text(who + when)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .center)
+    }
+
+    @ViewBuilder
+    private func body(of message: ImMessage) -> some View {
+        // Anyone on earth can have written what a nobody sends, so its
+        // interactive cards — a file offer, a voice note — are never
+        // drawn as something to click. Text stays readable. See NOBODY_SPEC.md.
+        let fromNobody = !message.isOutgoing(from: session.liveFid)
+            && senderFid(of: message).map(names.isNobody) == true
+        if fromNobody && (message.contentType == .voice || message.contentType == .hat) {
+            Text(NobodyText.contentHidden)
+                .font(.caption)
+                .foregroundStyle(NobodyMark.color)
+        } else if message.isSealed {
+            sealedBubble(message)
+        } else if message.contentType == .call, message.type == .room || message.type == .team,
+                  let signal = message.content.flatMap(MeetingSignal.fromJson) {
+            // A meeting's card (VOICE_SPEC §3.3): join it from here while it runs.
+            MeetingCardView(signal: signal)
+        } else if message.contentType == .call {
+            // A call record, not something anybody said (VOICE_SPEC §10).
+            Label(CallText.describe(message.content), systemImage: "phone")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+        } else if message.contentType == .voice {
+            // Before the `content` branch, because a voice note's
+            // content is its metadata JSON — showing that to the user is
+            // showing them the plumbing.
+            voiceBubble(message)
+        } else if message.contentType == .hat, let offer = session.fileShare.offer(in: message) {
+            fileBubble(offer, message: message)
+        } else if let content = message.content {
+            Text(content).textSelection(.enabled)
+        } else {
+            Text(Conversation.preview(for: message) ?? "")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    /// A row we could not open: which era of the conversation it belongs
+    /// to, and the one action that can change that.
+    ///
+    /// **The button is the point.** Until now this was a sentence and
+    /// nothing else, so a user who could not read a message had to notice
+    /// the key was missing, find the thread menu, pick members by hand and
+    /// know which version to name. The version is right here on the row,
+    /// so the row can ask for it.
+    ///
+    /// It is a visible button rather than a tap on the bubble: a mystery
+    /// click target beside text you cannot read is worse than a mystery,
+    /// and the copy-on-click convention belongs to FIDs and status
+    /// messages, not to bubbles.
+    @ViewBuilder
+    private func sealedBubble(_ message: ImMessage) -> some View {
+        let missing = missingVersion(of: message)
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 4) {
+                Image(systemName: "lock.slash")
+                Text(sealedNote(for: message))
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+
+            if let missing {
+                Button {
+                    onAskForKey(missing)
+                } label: {
+                    Label(askTitle(for: missing), systemImage: "questionmark.key.filled")
+                        .font(.caption)
+                }
+                .buttonStyle(.borderless)
+                .disabled(waiting(for: missing) != nil)
+                .help(askHelp(for: missing))
+            }
+        }
+    }
+
+    /// The version this row needs and this device does not hold, or nil
+    /// when there is nothing to ask for — a P2P row, or a key that is
+    /// here and simply does not open this body.
+    private func missingVersion(of message: ImMessage) -> Int64? {
+        guard message.type == .team || message.type == .room,
+              let entityId = message.targetId, !entityId.isEmpty,
+              let version = message.symkeyVersion,
+              version >= SymkeyStore.minimumVersion,
+              (try? session.symkeys.has(entityId: entityId, version: version)) == false
+        else { return nil }
+        return version
+    }
+
+    /// When this question may be put to anybody again, or nil when it may
+    /// be put now.
+    ///
+    /// Shown rather than enforced silently: the courier asks the sender by
+    /// itself as soon as the row is filed (FIMP §7.4), so by the time a
+    /// user reads it the question has usually *already* been asked, and a
+    /// button that quietly did nothing would read as broken. The cooldown
+    /// is per person, so this is an approximation for one row's chrome —
+    /// the sheet gates each member exactly when it sends.
+    private func waiting(for version: Int64) -> Date? {
+        guard !conversation.targetId.isEmpty,
+              let ask = try? session.keyAsks.ask(
+                  entityId: conversation.targetId, version: version
+              ),
+              !ask.askedFids.isEmpty
+        else { return nil }
+        let readyAt = Date(
+            timeIntervalSince1970: Double(ask.lastAskedAt) / 1000 + KeyAsksStore.cooldown
+        )
+        return readyAt > Date() ? readyAt : nil
+    }
+
+    private func askTitle(for version: Int64) -> String {
+        if let until = waiting(for: version) {
+            let seconds = max(1, Int(until.timeIntervalSinceNow.rounded(.up)))
+            return "Asked just now — again in \(seconds)s"
+        }
+        return "Ask for this symkey…"
+    }
+
+    private func askHelp(for version: Int64) -> String {
+        let held = (try? session.symkeys.versions(for: conversation.targetId)) ?? []
+        let withTime = SymkeyVersionText.needsTime(version, among: held + [version])
+        return "Asks the members for \(SymkeyVersionText.inProse(version, withTime: withTime))."
+    }
+
+    /// Why a row is still locked, said only as far as we actually know.
+    ///
+    /// A group row names a symkey version, so the store can be asked
+    /// whether that version is here — and the two answers mean opposite
+    /// things to whoever is reading. Missing is a key to go and ask a
+    /// member for. Present is not: the key arrived and this row did not
+    /// open under it, which is a fault on this device, and telling the
+    /// user to ask for the key again would send them round a loop that
+    /// cannot end.
+    ///
+    /// A P2P row is sealed to a prikey rather than a symkey, so there is
+    /// no version and nothing to look up.
+    private func sealedNote(for message: ImMessage) -> String {
+        guard message.type == .team || message.type == .room,
+              let entityId = message.targetId, !entityId.isEmpty,
+              let version = message.symkeyVersion
+        else { return "Sealed — this identity holds no key that opens it" }
+
+        // A version is a mint time, so this says *when*, not `v1789813689`.
+        // The era is what a reader can act on: it tells them who was in
+        // the conversation then, and therefore who to ask.
+        let versions = (try? session.symkeys.versions(for: entityId)) ?? []
+        let named = SymkeyVersionText.inProse(
+            version, withTime: SymkeyVersionText.needsTime(version, among: versions + [version])
+        )
+        let held = (try? session.symkeys.has(entityId: entityId, version: version)) ?? false
+        return held
+            ? "Sealed with \(named) — that key is here but does not open this"
+            : "Sealed with \(named) — not held here"
+    }
+
+    /// A voice note: play it, and see how long it is.
+    ///
+    /// The audio is *in* the message — a short note travels inline — so
+    /// there is nothing to fetch and no offer to accept. A long note
+    /// went to DISK instead and arrives as a file share, which is why
+    /// there is no download button here.
+    @ViewBuilder
+    private func voiceBubble(_ message: ImMessage) -> some View {
+        let meta = VoiceNote.meta(in: message)
+        let id = message.id ?? ""
+        let playing = player.playingId == id
+
+        if let audio = message.data, !audio.isEmpty {
+            HStack(spacing: 8) {
+                Button {
+                    player.toggle(id: id, data: audio)
+                } label: {
+                    Image(systemName: playing ? "pause.circle.fill" : "play.circle.fill")
+                        .font(.title2)
+                }
+                .buttonStyle(.borderless)
+                .help(playing ? "Stop" : "Play this voice note")
+
+                ChatTrack(fraction: playing ? player.progress : 0, width: 90, color: style.tint)
+
+                Text(VoiceNote.formatDuration(meta?.durationMs ?? 0))
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+        } else {
+            // Metadata but no audio: a note whose payload was dropped
+            // somewhere between the sender and the store. Say so rather
+            // than drawing a play button that does nothing.
+            Label("Voice note — the audio didn't arrive", systemImage: "mic.slash")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    /// A shared file: what it is, and the one action that applies.
+    ///
+    /// The bubble itself is the action — click it to open the file, or
+    /// to fetch it first if it isn't here yet. That is what every chat
+    /// app trains the hand to do, and it leaves the row with one
+    /// obvious thing to click instead of a label and a button
+    /// competing for the same meaning.
+    ///
+    /// The ⓘ carries everything the row deliberately does not say: the
+    /// DID, where the bytes are, what the sender described it as.
+    private func fileBubble(_ offer: FileShareService.Offer, message: ImMessage) -> some View {
+        let state = offer.isDownloaded ? nil : downloads[offer.hatId]
+        let running: Int64? = if case .running(let received) = state { received } else { nil }
+        let failure: String? = if case .failed(let reason) = state { reason } else { nil }
+
+        return VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 8) {
+                Button {
+                    if let url = offer.localURL {
+                        FileOpening.open(url, named: offer.name)
+                    } else if running == nil {
+                        onDownload(message)
+                    }
+                } label: {
+                    HStack(spacing: 8) {
+                        Group {
+                            if running != nil {
+                                ProgressView().controlSize(.small)
+                            } else {
+                                Image(systemName: offer.isDownloaded ? "doc.fill" : "arrow.down.doc")
+                                    .font(.title3)
+                            }
+                        }
+                        .frame(width: 22)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(offer.name).lineLimit(1).truncationMode(.middle)
+                            if let received = running {
+                                downloadProgress(received: received, size: offer.size)
+                            } else {
+                                HStack(spacing: 6) {
+                                    if let size = offer.size {
+                                        Text(Self.bytes(size))
+                                    }
+                                    Text(offer.isDownloaded ? "Click to open"
+                                         : failure != nil ? "Click to retry" : "Click to download")
+                                    if !offer.hasKey {
+                                        Text("no key — only fetchable if public")
+                                    }
+                                }
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                            }
+                        }
+                    }
+                    // Without this the gaps between icon and text are dead
+                    // space, and half the bubble would not answer a click.
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .pointingHand()
+                .help(offer.isDownloaded
+                      ? "Open \(offer.name) in the app that reads it"
+                      : running != nil ? "Fetching \(offer.name)…"
+                      : "Fetch \(offer.name) to this device")
+                .contextMenu {
+                    if let url = offer.localURL {
+                        Button("Show in Finder") { FileOpening.reveal(url, named: offer.name) }
+                    }
+                    Button("Copy data id") {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(offer.hatId, forType: .string)
+                    }
+                }
+
+                Button { inspecting = offer.hat } label: {
+                    Image(systemName: "info.circle")
+                }
+                .buttonStyle(.borderless)
+                .pointingHand()
+                .help("What this file record says — its data id, size and where the bytes are")
+            }
+
+            // Outside the card's button, so a click copies the reason
+            // instead of retrying.
+            if let failure {
+                CopyableText("Download failed: \(failure)", font: .caption2, color: .red)
+                    .lineLimit(3)
+                    .padding(.leading, 30)
+            }
+        }
+    }
+
+    /// The bar and the count under a file that is on its way. With no
+    /// size in the record there is nothing to measure against, so the
+    /// count is all it shows.
+    @ViewBuilder
+    private func downloadProgress(received: Int64, size: Int64?) -> some View {
+        HStack(spacing: 6) {
+            if let size, size > 0 {
+                // The wire carries ciphertext, which runs a little past
+                // the plaintext size the record gives.
+                let fraction = min(Double(received) / Double(size), 1)
+                ChatTrack(fraction: fraction, width: 110, color: style.tint)
+                Text("\(Int(fraction * 100))% of \(Self.bytes(size))")
+            } else {
+                Text(received > 0 ? "Downloading \(Self.bytes(received))…" : "Downloading…")
+            }
+        }
+        .font(.caption2.monospacedDigit())
+        .foregroundStyle(.secondary)
+    }
+
+    private static func bytes(_ count: Int64) -> String {
+        ByteCountFormatter.string(fromByteCount: count, countStyle: .file)
+    }
+
+    /// The delivery state, told straight. "Sent" means the DOCK took it
+    /// and nothing more — a checkmark claiming the recipient has it would
+    /// be a claim this route cannot make.
+    @ViewBuilder
+    private func statusLabel(_ message: ImMessage) -> some View {
+        switch message.status {
+        case .pending, .none:
+            Label("Queued", systemImage: "clock")
+                .help("Sealed and waiting in the outbox. It goes out on the next send.")
+        case .sent:
+            Label("Sent", systemImage: "checkmark")
+                .help("Parked at their DOCK. They have it when they next collect.")
+        case .delivered:
+            Label("Delivered", systemImage: "checkmark.circle")
+        case .read:
+            Label("Read", systemImage: "checkmark.circle.fill")
+        case .failed:
+            Label("Failed", systemImage: "exclamationmark.triangle").foregroundStyle(.orange)
+        case .quarantined:
+            Label("Held", systemImage: "hand.raised")
+                .help("Held as a message request — it is not in a conversation yet.")
+        case .imported:
+            Label("Imported · unverified", systemImage: "tray.and.arrow.down")
+                .help("Imported from shared history. History carries no signatures, so it can't be proven who wrote it.")
+        }
+    }
+}
+
+/// Where one chat file's fetch stands while it is not finished. A
+/// finished one needs no entry: the card reads that off the store.
+enum ChatFileDownload: Equatable {
+    case running(received: Int64)
+    case failed(String)
+}
+
+/// The one bar shape playback progress, the recording level and a chat
+/// file's download are drawn with.
+struct ChatTrack: View {
+    let fraction: Double
+    let width: CGFloat
+    let color: Color
+
+    var body: some View {
+        ZStack(alignment: .leading) {
+            Capsule().fill(Color.secondary.opacity(0.25))
+            Capsule().fill(color)
+                .frame(width: width * max(0, min(1, fraction)))
+        }
+        .frame(width: width, height: 5)
+    }
+}
+
+
+/// One meeting's card in a Room or Team chat: its title and, from the board,
+/// whether it still runs. Join is the only thing to do with it.
+private struct MeetingCardView: View {
+    @Environment(AppState.self) private var appState
+    let signal: MeetingSignal
+    @State private var error: String?
+
+    var body: some View {
+        let meetings = appState.meetingCenter
+        let _ = meetings.cardsRevision // redraw when a card changes
+        let known = meetings.board?.get(signal.meetingId)
+        let here = meetings.isActive && meetings.meeting?.meetingId == signal.meetingId
+        VStack(alignment: .leading, spacing: 6) {
+            Label(signal.title.map { "Voice meeting: \($0)" } ?? "Voice meeting", systemImage: "person.3.fill")
+                .font(.callout.bold())
+            if known?.invited == true {
+                Text("Only invited members").font(.caption).foregroundStyle(.secondary)
+            }
+            if let m = known, m.ended {
+                Text(m.duration > 0 ? "Ended · \(CallText.formatDuration(m.duration))" : "Ended")
+                    .font(.caption).foregroundStyle(.secondary)
+            } else if known == nil {
+                Text("This device cannot join it.").font(.caption).foregroundStyle(.secondary)
+            } else {
+                Button(here ? "Show" : "Join") {
+                    Task { error = await meetings.join(meetingId: signal.meetingId) }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(!here && meetings.isActive)
+            }
+            if let error {
+                CopyableText(error).font(.caption).foregroundStyle(.red)
+            }
+        }
+    }
+}
+
+/// The earlier versions of an edited message, newest first.
+private struct EditHistoryView: View {
+    let message: ImMessage
+    let history: [ImMessage.Edition]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Earlier versions").font(.headline)
+            version("Now", at: message.editedAt, message.content)
+            ForEach(Array(history.enumerated().reversed()), id: \.offset) { _, v in
+                version(v.editId == nil ? "Original" : "Edited", at: v.at, v.content)
+            }
+        }
+        .padding(14)
+        .frame(minWidth: 240, maxWidth: 380, alignment: .leading)
+    }
+
+    private func version(_ label: String, at: Int64?, _ text: String?) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(label + (at.map { " · " + ChatFormat.shortTime.string(from: Date(timeIntervalSince1970: Double($0) / 1000)) } ?? ""))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text(text ?? "").textSelection(.enabled)
+        }
+    }
+}
