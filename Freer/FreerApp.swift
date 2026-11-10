@@ -6,6 +6,12 @@ struct FreerApp: App {
 
     @State private var appState = AppState()
 
+    init() {
+        // Read before anything changes it: Settings compares the saved
+        // choice against this to know a restart is still owed.
+        _ = AppLanguage.atLaunch
+    }
+
     var body: some Scene {
         WindowGroup {
             AppRouter()

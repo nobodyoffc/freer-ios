@@ -152,5 +152,47 @@ final class WalkthroughTests: XCTestCase {
         app.buttons["设置"].firstMatch.tap()
         sleep(1)
         snap("zh-设置")
+
+        // The language picker: choose English, and the note about
+        // restarting appears. Then put the choice back, so the next run
+        // starts as this one did.
+        let language = app.staticTexts["语言"]
+        // Short drags, not swipes: the form only holds the rows on screen,
+        // and a flick can carry the one being looked for straight past.
+        let top = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.45))
+        let bottom = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.7))
+        for _ in 0..<30 where !(language.exists && language.isHittable) {
+            bottom.press(forDuration: 0.05, thenDragTo: top)
+        }
+        // One more, so the picker under the label is clear of the screen's edge.
+        bottom.press(forDuration: 0.05, thenDragTo: top)
+        XCTAssertTrue(language.exists, "the Language setting")
+        snap("zh-语言")
+        // Theme sits above Language and reads Follow system too: the
+        // language picker is the second of the two.
+        let followers = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "跟随系统"))
+        XCTAssertEqual(followers.count, 2, "Theme and Language, both on Follow system")
+        let picker = followers.element(boundBy: 1)
+        picker.tap()
+        app.buttons["English"].tap()
+        sleep(1)
+        snap("zh-语言-English")
+        XCTAssertTrue(
+            app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "下次启动时显示新语言")).firstMatch.exists,
+            "the restart note"
+        )
+        app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "English")).firstMatch.tap()
+        sleep(1)
+        snap("zh-语言-menu")
+        // Two controls read Follow system now: Theme's picker on the page,
+        // and the item in the open menu. The menu's rows are the wide ones.
+        let choices = app.buttons.matching(NSPredicate(format: "label == %@", "跟随系统")).allElementsBoundByIndex
+        if let item = choices.first(where: { $0.frame.width > 200 }) {
+            item.tap()
+        } else {
+            XCTFail("no Follow system item in the language menu")
+        }
+        sleep(1)
+        XCTAssertEqual(followers.count, 2, "Language back on Follow system")
     }
 }
