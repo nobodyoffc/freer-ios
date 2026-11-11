@@ -81,6 +81,10 @@ struct DockTopUpSheet: View {
             footer
         }
         .sheetFrame(width: 520, height: 540)
+        .bottomBar(back: {
+            if !isConfirming, paidTxid != nil { appState.retryUnpaidDock(unpaid.dockUrl) }
+            onClose()
+        }) { actions }
         .fidDetailsHost(session: session)
         .task {
             if isConfirming { loading = false } else { await load() }
@@ -134,35 +138,33 @@ struct DockTopUpSheet: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 8)
-            if isConfirming {
-                Button("Close", action: onClose).keyboardShortcut(.cancelAction)
-                Button("Check now") {
-                    appState.retryUnpaidDock(unpaid.dockUrl)
-                    onClose()
-                }
-                .keyboardShortcut(.defaultAction)
-            } else if paidTxid != nil {
-                Button("Done") {
-                    appState.retryUnpaidDock(unpaid.dockUrl)
-                    onClose()
-                }
-                .keyboardShortcut(.defaultAction)
-            } else {
-                Button("Cancel", action: onClose).keyboardShortcut(.cancelAction)
-                Button {
-                    Task { await pay() }
-                } label: {
-                    if paying {
-                        ProgressView().controlSize(.small)
-                    } else {
-                        Label("Pay", systemImage: "arrow.up.right.circle.fill")
-                    }
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(topUp == nil || blockReason != nil || paying)
-            }
         }
         .padding(12)
+    }
+
+    /// The bottom bar. Back closes — and once the payment is made, it is
+    /// the old Done: it has the DOCK tried again on the way out.
+    @ViewBuilder
+    private var actions: some View {
+        if isConfirming {
+            Button("Check now") {
+                appState.retryUnpaidDock(unpaid.dockUrl)
+                onClose()
+            }
+            .keyboardShortcut(.defaultAction)
+        } else if paidTxid == nil {
+            Button {
+                Task { await pay() }
+            } label: {
+                if paying {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Label("Pay", systemImage: "arrow.up.right.circle.fill")
+                        .labelStyle(.titleAndIcon)
+                }
+            }
+            .disabled(topUp == nil || blockReason != nil || paying)
+        }
     }
 
     // MARK: - panels

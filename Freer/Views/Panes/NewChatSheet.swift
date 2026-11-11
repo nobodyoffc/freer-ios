@@ -156,17 +156,13 @@ struct NewChatSheet: View {
                 Text(note).font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-
-            HStack {
-                Spacer()
-                Button("Cancel", role: .cancel) { onCancel() }
-                Button(primaryTitle) { commit() }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(working || !canCommit)
-            }
         }
         .padding(20)
         .sheetFrame(width: 480)
+        .bottomBar(back: { onCancel() }) {
+            Button(primaryTitle) { commit() }
+                .disabled(working || !canCommit)
+        }
         .sheet(item: $pick) { request in
             FidPickerSheet(session: session, request: request) { picked in
                 receive(picked)

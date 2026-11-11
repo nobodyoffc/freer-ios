@@ -203,6 +203,34 @@ struct ContactEditorSheet: View {
             footer
         }
         .sheetFrame(minWidth: 540, minHeight: 580)
+        .bottomBar(back: { onCancel() }) {
+            if isCarved {
+                // A carved contact can only be carved or cancelled.
+            } else if session.canSign {
+                saveButton
+            } else {
+                saveButton
+                    .keyboardShortcut(.defaultAction)
+            }
+            if session.canSign {
+                Button {
+                    Task { await saveAndCarve() }
+                } label: {
+                    if carving {
+                        HStack(spacing: 6) {
+                            ProgressView().controlSize(.small)
+                            Text("Carving…")
+                        }
+                        .frame(width: 120)
+                    } else {
+                        Text(isCarved ? "Carve update" : "Save & carve").frame(width: 120)
+                    }
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(!canSave || isPendingCarve)
+                .help("Broadcast the contact as an encrypted FEIP CONTACT carve (small miner fee), then save it locally. Shows as On-chain once a block confirms it.")
+            }
+        }
         .onAppear { loadFromMode() }
         .sheet(item: $pick) { request in
             FidPickerSheet(session: session, request: request) { picked in
@@ -266,38 +294,6 @@ struct ContactEditorSheet: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
-            Button("Cancel", role: .cancel) { onCancel() }
-                .keyboardShortcut(.cancelAction)
-            if isCarved {
-                // A carved contact can only be carved or cancelled.
-            } else if session.canSign {
-                saveButton
-                    .buttonStyle(.bordered)
-            } else {
-                saveButton
-                    .keyboardShortcut(.defaultAction)
-                    .buttonStyle(.borderedProminent)
-            }
-
-            if session.canSign {
-                Button {
-                    Task { await saveAndCarve() }
-                } label: {
-                    if carving {
-                        HStack(spacing: 6) {
-                            ProgressView().controlSize(.small)
-                            Text("Carving…")
-                        }
-                        .frame(width: 120)
-                    } else {
-                        Text(isCarved ? "Carve update" : "Save & carve").frame(width: 120)
-                    }
-                }
-                .keyboardShortcut(.defaultAction)
-                .buttonStyle(.borderedProminent)
-                .disabled(!canSave || isPendingCarve)
-                .help("Broadcast the contact as an encrypted FEIP CONTACT carve (small miner fee), then save it locally. Shows as On-chain once a block confirms it.")
-            }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)

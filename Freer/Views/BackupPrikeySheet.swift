@@ -126,11 +126,11 @@ struct BackupPrikeySheet: View {
                 .padding(.vertical, 8)
             }
 
-            Divider()
-            footer
         }
-        .sheetFrame(width: 560)
-        .frame(maxHeight: 720)
+        // A fixed box, so the sheet's own scroller is the only one and
+        // the bar below stays put under the thumb.
+        .sheetFrame(width: 560, height: 720)
+        .bottomBar(back: onLater) { footer }
         .onAppear(perform: load)
         .onDisappear { secret = nil }
         .onChange(of: format) { _, _ in
@@ -169,21 +169,17 @@ struct BackupPrikeySheet: View {
         .padding(.vertical, 14)
     }
 
+    /// Back is "Later": close without recording a backup, and be
+    /// reminded again.
     private var footer: some View {
-        HStack {
-            Button("Later", action: onLater)
-                .help("Close without recording a backup — you'll be reminded again.")
-            Spacer()
-            Button("I have my copy") {
-                onDone()
-            }
-            .keyboardShortcut(.defaultAction)
-            .buttonStyle(.borderedProminent)
-            .disabled(loadError != nil)
-            .help("Stops the reminder. Say this only once the copy is somewhere you'll still have it if this device is gone.")
+        Button {
+            onDone()
+        } label: {
+            Text("I have my copy").frame(minHeight: 30)
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 12)
+        .keyboardShortcut(.defaultAction)
+        .disabled(loadError != nil)
+        .help("Stops the reminder. Say this only once the copy is somewhere you'll still have it if this device is gone.")
     }
 
     // MARK: - the key itself
@@ -221,6 +217,7 @@ struct BackupPrikeySheet: View {
                 }
                 .help("Show the key itself as a QR code, in the format above — unencrypted, so only where nothing else can see the screen.")
             }
+            .roundButtons()
 
             Group {
                 if revealed {
@@ -305,17 +302,21 @@ struct BackupPrikeySheet: View {
                         Label("Copy cipher", systemImage: "doc.on.doc")
                     }
                     .help("Put the whole encrypted backup on the clipboard.")
-                    Button("Save cipher…") { saveCipher(cipher) }
-                        .help("Write the encrypted backup to a text file. Safe to keep in cloud storage — the password is not in it.")
-                    Button(qrTarget == .cipher ? "Hide QR" : "QR code") {
+                    Button {
+                        saveCipher(cipher)
+                    } label: {
+                        Label("Save cipher…", systemImage: "square.and.arrow.down")
+                    }
+                    .help("Write the encrypted backup to a text file. Safe to keep in cloud storage — the password is not in it.")
+                    Button {
                         qrTarget = qrTarget == .cipher ? nil : .cipher
                         refreshQr()
-                    }
-                    if qrTarget == .cipher, !qrImages.isEmpty {
-                        Button("Save QR…") { saveQr() }
+                    } label: {
+                        Label(qrTarget == .cipher ? "Hide QR" : "QR code", systemImage: "qrcode")
                     }
                     Spacer()
                 }
+                .roundButtons()
             }
         }
     }
@@ -358,6 +359,13 @@ struct BackupPrikeySheet: View {
                 Text("The encrypted backup — scannable by Freer on another machine, or on Android.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                // Under the code it saves, and in words: as a bare icon
+                // beside "Save cipher" the two could not be told apart.
+                Button {
+                    saveQr()
+                } label: {
+                    Label("Save QR…", systemImage: "square.and.arrow.down")
+                }
             }
         }
         .frame(maxWidth: .infinity)

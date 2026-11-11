@@ -119,6 +119,14 @@ struct FidDetailSheet: View {
             footer
         }
         .sheetFrame(width: 580, height: 680)
+        .bottomBar(back: onClose) {
+            Button {
+                Task { await load() }
+            } label: {
+                Label("Refresh", systemImage: "arrow.clockwise")
+            }
+            .disabled(loading)
+        }
         .task { await load() }
         .sheet(isPresented: $rating) {
             RateFreerSheet(session: session, ratee: fid, freer: freer) { txid in
@@ -224,13 +232,6 @@ struct FidDetailSheet: View {
                 .font(.caption2)
                 .foregroundStyle(.secondary)
             Spacer()
-            Button {
-                Task { await load() }
-            } label: {
-                Label("Refresh", systemImage: "arrow.clockwise")
-            }
-            .disabled(loading)
-            Button("Done", action: onClose).keyboardShortcut(.defaultAction)
         }
         .padding(12)
     }

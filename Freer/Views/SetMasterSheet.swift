@@ -129,6 +129,22 @@ struct SetMasterSheet: View {
             footer
         }
         .sheetFrame(minWidth: 580, minHeight: 560)
+        .bottomBar(back: { onCancel() }) {
+            Button(role: .destructive) {
+                Task { await carve() }
+            } label: {
+                if carving {
+                    HStack(spacing: 6) {
+                        ProgressView().controlSize(.small)
+                        Text("Carving…")
+                    }
+                } else {
+                    Text("Set master")
+                }
+            }
+            .tint(.red)
+            .disabled(!canCarve)
+        }
         .sheet(item: $pick) { request in
             FidPickerSheet(session: session, request: request) { picked in
                 pick = nil
@@ -309,23 +325,6 @@ struct SetMasterSheet: View {
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer()
-            Button("Cancel", role: .cancel) { onCancel() }
-                .keyboardShortcut(.cancelAction)
-            Button(role: .destructive) {
-                Task { await carve() }
-            } label: {
-                if carving {
-                    HStack(spacing: 6) {
-                        ProgressView().controlSize(.small)
-                        Text("Carving…")
-                    }
-                } else {
-                    Text("Set master")
-                }
-            }
-            .buttonStyle(.borderedProminent)
-            .tint(.red)
-            .disabled(!canCarve)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)

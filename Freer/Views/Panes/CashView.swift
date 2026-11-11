@@ -126,6 +126,7 @@ struct CashView: View {
         }
         .padding()
         .sheetFrame(minWidth: 620)
+        .bottomBar { actions }
         .onAppear {
             loadCache()
             Task { await refresh() }
@@ -177,43 +178,64 @@ struct CashView: View {
 
             Spacer()
 
+            if loading {
+                ProgressView().controlSize(.small)
+            }
             if let when = snapshot?.snapshotAt {
                 Text("Updated \(when.formatted(.relative(presentation: .named)))")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+        }
+    }
 
+    // MARK: - actions
+
+    /// The bottom bar, in Android's order: more, reorganise, send — and
+    /// Back after them. Merge / Split keeps its words.
+    @ViewBuilder
+    private var actions: some View {
+        // Refresh rides in the menu: with a button of its own the row is
+        // wider than a phone, and Merge / Split is the one that gave way.
+        Menu {
             Button {
                 Task { await refresh() }
             } label: {
-                if loading {
-                    ProgressView().controlSize(.small)
-                } else {
-                    Label("Refresh", systemImage: "arrow.clockwise")
-                }
+                Label("Refresh", systemImage: "arrow.clockwise")
+                    .labelStyle(.titleAndIcon)
             }
             .disabled(loading)
-
-            Menu {
-                Button("Export selected…") { showExport = true }
-                    .disabled(selection.isEmpty)
-                Divider()
-                Button("Rebuild from server…", role: .destructive) { pendingPurge = true }
-            } label: {
-                Image(systemName: "ellipsis.circle")
-            }
-            .menuStyle(.borderlessButton)
-            .fixedSize()
-            .help("Export the selected cashes, or rebuild the list from scratch")
+            Button("Export selected…") { showExport = true }
+                .disabled(selection.isEmpty)
+            Divider()
+            Button("Rebuild from server…", role: .destructive) { pendingPurge = true }
+        } label: {
+            Label("More", systemImage: "ellipsis")
         }
+        .help("Refresh, export the selected cashes, or rebuild the list from scratch")
+
+        Button {
+            showReorg = true
+        } label: {
+            Text("Merge / Split…").frame(minHeight: 30)
+        }
+        .disabled(selection.isEmpty)
+        .help("Pay yourself, reshaping these cashes into different denominations")
+
+        Button {
+            showSend = true
+        } label: {
+            Label("Send…", systemImage: "paperplane")
+        }
+        .disabled(selection.isEmpty)
+        .help("Pay someone using exactly these cashes")
     }
 
     // MARK: - summary
 
-    /// What is ticked, and what can be done with it. Android puts the
-    /// same three totals in a card above the list; the difference is
-    /// that here the actions sit next to the numbers they act on
-    /// rather than in a bottom button bar.
+    /// What is ticked. Android puts the same three totals in a card
+    /// above the list, and what can be done with them in the bottom
+    /// bar — as ``actions`` does here.
     private var summaryBar: some View {
         FlowRow(spacing: 14) {
             Toggle(isOn: Binding(
@@ -232,25 +254,6 @@ struct CashView: View {
             statistic(String(localized: "Amount"), formatFch(selectedValue))
             statistic(String(localized: "CoinDays"), formatLargeNumber(selectedCd))
                 .help("\(formatExactNumber(selectedCd)) CoinDays in the ticked cashes")
-
-            Spacer()
-
-            Button {
-                showSend = true
-            } label: {
-                Label("Send…", systemImage: "paperplane")
-            }
-            .disabled(selection.isEmpty)
-            .help("Pay someone using exactly these cashes")
-
-            Button {
-                showReorg = true
-            } label: {
-                Label("Merge / Split…", systemImage: "arrow.triangle.merge")
-            }
-            .buttonStyle(.borderedProminent)
-            .disabled(selection.isEmpty)
-            .help("Pay yourself, reshaping these cashes into different denominations")
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)

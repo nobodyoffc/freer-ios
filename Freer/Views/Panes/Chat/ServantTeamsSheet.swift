@@ -38,17 +38,6 @@ struct ServantTeamsSheet: View {
             HStack {
                 Text("Servants' teams").font(.title3.bold())
                 Spacer()
-                Button {
-                    Task { await load() }
-                } label: {
-                    if loading {
-                        ProgressView().controlSize(.small)
-                    } else {
-                        Label("Check the chain", systemImage: "arrow.clockwise")
-                    }
-                }
-                .disabled(loading)
-                Button("Done", action: onClose).keyboardShortcut(.defaultAction)
             }
 
             Text("Teams owned by FIDs that name you as their master. The chain lets an owner's master hand a team over, so a team outlives its owner losing their prikey — that is the only thing a master can do for it here.")
@@ -82,6 +71,18 @@ struct ServantTeamsSheet: View {
         }
         .padding(20)
         .sheetFrame(width: 600, height: 460)
+        .bottomBar(back: onClose) {
+            Button {
+                Task { await load() }
+            } label: {
+                if loading {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Label("Check the chain", systemImage: "arrow.clockwise")
+                }
+            }
+            .disabled(loading)
+        }
         .fidDetailsHost(session: session)
         .task { await load() }
         .sheet(item: $transferring) { ref in

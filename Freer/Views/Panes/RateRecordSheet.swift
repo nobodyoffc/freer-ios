@@ -143,6 +143,19 @@ struct RateRecordSheet: View {
             footer
         }
         .sheetFrame(width: 580, height: 680)
+        .bottomBar(back: onCancel) {
+            Button {
+                Task { await send() }
+            } label: {
+                if carving {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Label("Rate \(score.rawValue)", systemImage: "star.fill")
+                        .labelStyle(.titleAndIcon)
+                }
+            }
+            .disabled(!canSend)
+        }
         .task { await load() }
     }
 
@@ -202,18 +215,6 @@ struct RateRecordSheet: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 8)
-            Button("Cancel", action: onCancel).keyboardShortcut(.cancelAction)
-            Button {
-                Task { await send() }
-            } label: {
-                if carving {
-                    ProgressView().controlSize(.small)
-                } else {
-                    Label("Rate \(score.rawValue)", systemImage: "star.fill")
-                }
-            }
-            .buttonStyle(.borderedProminent)
-            .disabled(!canSend)
         }
         .padding(12)
     }

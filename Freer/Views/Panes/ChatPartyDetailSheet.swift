@@ -70,24 +70,19 @@ struct ChatPartyDetailSheet: View {
                 }
                 .padding(20)
             }
-
-            Divider()
-            HStack {
-                if conversation.type == .team {
-                    Button {
-                        rating = true
-                    } label: {
-                        Label("Rate", systemImage: "star")
-                    }
-                    .disabled(!canRateTeam)
-                    .help(rateTeamHelp)
-                }
-                Spacer()
-                Button("Done", action: onClose).keyboardShortcut(.defaultAction)
-            }
-            .padding(12)
         }
         .sheetFrame(width: 560, height: 620)
+        .bottomBar(back: onClose) {
+            if conversation.type == .team {
+                Button {
+                    rating = true
+                } label: {
+                    Label("Rate", systemImage: "star")
+                }
+                .disabled(!canRateTeam)
+                .help(rateTeamHelp)
+            }
+        }
         // A person's page, a group's owner, every member — all FIDs,
         // and a sheet cannot present another sheet through the window's
         // host, so this one installs its own.

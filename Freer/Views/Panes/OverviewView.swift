@@ -75,6 +75,7 @@ struct OverviewView: View {
         }
         .padding()
         .sheetFrame(minWidth: 480)
+        .bottomBar()
         .onAppear {
             reloadLocal()
             // Re-sync the cash index every time the user lands here, so

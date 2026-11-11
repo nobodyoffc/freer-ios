@@ -143,13 +143,10 @@ struct MyImagesPicker: View {
                 }
                 .frame(minHeight: 280, maxHeight: 420)
             }
-            HStack {
-                Spacer()
-                Button("Cancel") { done(nil) }.keyboardShortcut(.cancelAction)
-            }
         }
         .padding(20)
         .sheetFrame(width: 560)
+        .bottomBar(back: { done(nil) })
     }
 }
 

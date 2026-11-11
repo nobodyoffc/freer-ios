@@ -102,6 +102,7 @@ struct NewsView: View {
         }
         .padding()
         .sheetFrame(minWidth: 620)
+        .bottomBar { actions }
         .onAppear {
             guard !didAutoLoad else { return }
             didAutoLoad = true
@@ -172,27 +173,31 @@ struct NewsView: View {
             .menuStyle(.borderlessButton)
             .fixedSize()
             .help("Which field a chain search matches, and how results are sorted")
-
-            Button {
-                Task { await runChainSearch() }
-            } label: {
-                Label("Search chain", systemImage: "magnifyingglass.circle")
-            }
-            .disabled(loading || searchText.trimmingCharacters(in: .whitespaces).isEmpty)
-            .help("Search the whole index, not just the rows loaded here")
-
-            Button {
-                Task { await refresh() }
-            } label: {
-                if loading {
-                    ProgressView().controlSize(.small)
-                } else {
-                    Label("Refresh", systemImage: "arrow.clockwise")
-                }
-            }
-            .disabled(loading)
-            .help("Pull the newest activity from the chain")
         }
+    }
+
+    /// The bottom bar, primary last — and Back after it.
+    @ViewBuilder
+    private var actions: some View {
+        Button {
+            Task { await runChainSearch() }
+        } label: {
+            Label("Search chain", systemImage: "magnifyingglass.circle")
+        }
+        .disabled(loading || searchText.trimmingCharacters(in: .whitespaces).isEmpty)
+        .help("Search the whole index, not just the rows loaded here")
+
+        Button {
+            Task { await refresh() }
+        } label: {
+            if loading {
+                ProgressView().controlSize(.small)
+            } else {
+                Label("Refresh", systemImage: "arrow.clockwise")
+            }
+        }
+        .disabled(loading)
+        .help("Pull the newest activity from the chain")
     }
 
     private var chainSearchChip: some View {
@@ -587,7 +592,6 @@ private struct NewsDetailSheet: View {
             HStack {
                 Text("News record").font(.title3.bold())
                 Spacer()
-                Button("Close", action: onClose)
             }
             .padding()
 
@@ -629,6 +633,7 @@ private struct NewsDetailSheet: View {
             }
         }
         .sheetFrame(width: 480, height: 470)
+        .bottomBar(back: onClose)
         // This sheet draws a FID of its own, and a sheet cannot present
         // another sheet through the window's host — so it installs one.
         .fidDetailsHost(session: session)

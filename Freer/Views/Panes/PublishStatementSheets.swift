@@ -134,22 +134,19 @@ struct ComposeStatementSheet: View {
                     .font(.caption)
                     .foregroundStyle(.orange)
             }
-
-            HStack {
-                Button("Cancel") { onDone(.cancelled) }
-                    .keyboardShortcut(.cancelAction)
-                Spacer()
-                Button("Save draft") { saveDraft() }
-                    .disabled(busy || !hasSomethingToSay)
-                    .help("Keeps it on this device. A draft is the only form of a statement you can still change.")
-                Button("Carve statement") { Task { await carve() } }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(!canCarve)
-                if busy { ProgressView().controlSize(.small) }
-            }
         }
         .padding(20)
         .sheetFrame(width: 640)
+        .bottomBar(back: { onDone(.cancelled) }) {
+            Button("Save draft") { saveDraft() }
+                .disabled(busy || !hasSomethingToSay)
+                .help("Keeps it on this device. A draft is the only form of a statement you can still change.")
+
+            Button("Carve statement") { Task { await carve() } }
+                .disabled(!canCarve)
+
+            if busy { ProgressView().controlSize(.small) }
+        }
         // Editing after confirming means the confirmation was for
         // different words. Re-arm rather than carry it forward.
         .onChange(of: content) { _, _ in confirmed = false }
@@ -280,23 +277,19 @@ struct StatementReaderSheet: View {
             )
             .font(.caption)
             .foregroundStyle(.secondary)
-
-            HStack {
-                Button("Copy statement") {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(
-                        [statement.title, statement.content]
-                            .compactMap { $0 }.joined(separator: "\n\n"),
-                        forType: .string
-                    )
-                }
-                Spacer()
-                Button("Close") { onClose() }
-                    .keyboardShortcut(.cancelAction)
-            }
         }
         .padding(20)
         .sheetFrame(width: 640, height: 560)
+        .bottomBar(back: { onClose() }) {
+            Button("Copy statement") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(
+                    [statement.title, statement.content]
+                        .compactMap { $0 }.joined(separator: "\n\n"),
+                    forType: .string
+                )
+            }
+        }
         // This sheet draws FIDs of its own, and a sheet cannot present
         // another sheet through the window's host — so it installs one.
         .fidDetailsHost(session: session)

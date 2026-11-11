@@ -36,6 +36,31 @@ from the Mac's Swift code and laid out like the Android app.
   arguments. A pane toolbar's `HStack` → `FlowRow`, which wraps.
 - `.buttonStyle(.link)` → `.borderless`; `.toggleStyle(.checkbox)` → `.checkmark`.
 
+## Phone layout: buttons at the bottom
+
+Every pane and sheet in `Freer/Views` has one. Left as they were: the call
+and meeting screens (`Freer/Calls`), `ChooseMainView`, the person menu, and
+the sheets that live in the shared `FCUI` package (QR display and scan, the
+avatar), which keep their own Done.
+
+- A screen's actions go in `.bottomBar { … }` (`Platform/BottomBar.swift`), in
+  Android's order: more, secondary, primary, then Back, which the bar adds
+  itself. A sheet passes what its Cancel/Close did: `.bottomBar(back:) { … }`.
+  Sort, filter and search stay at the top. The bar must be applied outside the
+  pane's `.padding()`, or it stops short of the screen's edges.
+- Buttons in the bar, and in rows marked `.roundButtons()`, are Android's:
+  round and filled with the accent colour (grey when disabled). A `Label`
+  there shows its icon only. Don't give a button there a style of its own. Actions that are unusual or cannot be undone keep their words
+  (a `Text` with `.frame(minHeight: 30)` to match the icons' height).
+- A sheet with a bottom bar uses `sheetFrame(width:height:)`, so its own
+  scroller is the only one and the bar stays put.
+- The live identity at the right of every pane's title bar is
+  `LiveIdentityChip`, added once in `HomeView`'s `navigationDestination`,
+  where the pane's title is also put at the left end.
+- A view brought over from the Mac arrives with its buttons in a toolbar
+  `FlowRow` or a footer `HStack` again: move them into the bar, and in a merge
+  keep the iOS side of conflicts around toolbars and footers.
+
 ## Languages
 
 English is the source language and Simplified Chinese follows the system
@@ -76,7 +101,10 @@ Deliberately not taken: larger controls (`d9338b7`).
 The walkthrough is a UI test that makes a vault and an identity, opens every
 home tile and saves a screenshot of each — the way to see a layout change on
 a phone. Run it after touching a pane. `testChineseScreens` does a shorter
-pass in Chinese (pass it as the fourth argument, after a derived-data dir). `xcrun simctl list devices` gives a UDID.
+pass in Chinese, and `testBottomBarScreens` opens a few panes and a sheet
+from each, backing out with the bars' own Back (pass either as
+the fourth argument, after a derived-data dir, as
+`FreerUITests/WalkthroughTests/<name>`). `xcrun simctl list devices` gives a UDID.
 
 No signing team is set: simulator builds work as is, a device build needs
 `DEVELOPMENT_TEAM` in the target's settings. Bundle id `cash.freer.ios`.

@@ -118,7 +118,6 @@ struct AskMembersSheet: View {
             HStack {
                 Text(ask.title).font(.title3.bold())
                 Spacer()
-                Button("Cancel", role: .cancel, action: onClose)
             }
 
             Text(explanation)
@@ -169,6 +168,7 @@ struct AskMembersSheet: View {
         }
         .padding(20)
         .sheetFrame(width: 480, height: 420)
+        .bottomBar(back: onClose)
         .onAppear(perform: load)
     }
 

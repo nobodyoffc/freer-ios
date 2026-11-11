@@ -149,17 +149,13 @@ struct TeamTransferSheet: View {
                 CopyableText(error, font: .caption).foregroundStyle(.red)
                     .fixedSize(horizontal: false, vertical: true)
             }
-
-            HStack {
-                Spacer()
-                Button("Cancel", role: .cancel, action: onClose)
-                Button(working ? "Carving…" : "Offer the team (carve)") { offer() }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(working || chosen == nil || !session.canSign || authority == nil)
-            }
         }
         .padding(20)
         .sheetFrame(width: 520, height: authority == .ownersMaster ? 500 : 400)
+        .bottomBar(back: onClose) {
+            Button(working ? "Carving…" : "Offer the team (carve)") { offer() }
+                .disabled(working || chosen == nil || !session.canSign || authority == nil)
+        }
         .onAppear {
             team = try? session.teams.get(id: teamId)
             // The owner needs no lookup; the chain read below confirms it.

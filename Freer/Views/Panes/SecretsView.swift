@@ -64,32 +64,6 @@ struct SecretsView: View {
 
                 SearchField(String(localized: "Search title, type, memo…"), text: $search, minWidth: 140)
                     .help("Matches title, type, memo, and id — never the encrypted content")
-
-                Button {
-                    Task { await syncFromChain() }
-                } label: {
-                    if syncing {
-                        ProgressView().controlSize(.small)
-                    } else {
-                        Label("Refresh", systemImage: "arrow.clockwise")
-                    }
-                }
-                .disabled(syncing || !session.canSign)
-                .help(session.canSign
-                      ? "Pull your carved secrets from the chain"
-                      : "Watch-only identity — cannot decrypt on-chain secrets")
-
-                Button {
-                    editorPresetTotp = (tab == .totp)
-                    showEditor = true
-                } label: {
-                    Label(tab == .totp ? "Import" : "Add", systemImage: "plus")
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(!session.canSign)
-                .help(session.canSign
-                      ? (tab == .totp ? "Import a TOTP secret (Base32)" : "Save a new secret")
-                      : "Watch-only identity — no key to encrypt secrets with")
             }
 
             if let err = syncError {
@@ -129,6 +103,7 @@ struct SecretsView: View {
         }
         .padding()
         .sheetFrame(minWidth: 520)
+        .bottomBar { actions }
         .onAppear {
             reload()
             if !didAutoSync {
@@ -216,6 +191,35 @@ struct SecretsView: View {
         } message: {
             Text("Writes this secret to the FCH chain, encrypted so only you can read it. Costs a small miner fee, and it then syncs to any device you unlock with this key.")
         }
+    }
+
+    /// The bottom bar, primary last — and Back after it.
+    @ViewBuilder
+    private var actions: some View {
+        Button {
+            Task { await syncFromChain() }
+        } label: {
+            if syncing {
+                ProgressView().controlSize(.small)
+            } else {
+                Label("Refresh", systemImage: "arrow.clockwise")
+            }
+        }
+        .disabled(syncing || !session.canSign)
+        .help(session.canSign
+              ? "Pull your carved secrets from the chain"
+              : "Watch-only identity — cannot decrypt on-chain secrets")
+
+        Button {
+            editorPresetTotp = (tab == .totp)
+            showEditor = true
+        } label: {
+            Label(tab == .totp ? "Import" : "Add", systemImage: "plus")
+        }
+        .disabled(!session.canSign)
+        .help(session.canSign
+              ? (tab == .totp ? "Import a TOTP secret (Base32)" : "Save a new secret")
+              : "Watch-only identity — no key to encrypt secrets with")
     }
 
     // MARK: - secret list
@@ -800,15 +804,10 @@ private struct SecretDetailSheet: View {
             if let error {
                 CopyableText(error, font: .caption).foregroundStyle(.red)
             }
-
-            HStack {
-                Spacer()
-                Button("Done", action: onDone)
-                    .keyboardShortcut(.defaultAction)
-            }
         }
         .padding(20)
         .sheetFrame(width: 460)
+        .bottomBar(back: onDone)
         .frame(minHeight: 300, maxHeight: 560)
     }
 

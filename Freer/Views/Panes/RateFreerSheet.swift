@@ -133,6 +133,23 @@ struct RateFreerSheet: View {
             footer
         }
         .sheetFrame(width: 560, height: 640)
+        .bottomBar(back: onCancel) {
+            Button {
+                Task { await send() }
+            } label: {
+                if carving {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Label(
+                        rate == .good ? "Rate good" : "Rate bad",
+                        systemImage: rate == .good ? "hand.thumbsup.fill" : "hand.thumbsdown.fill"
+                    )
+                    .labelStyle(.titleAndIcon)
+                }
+            }
+            .tint(rate == .good ? .green : .red)
+            .disabled(!canSend)
+        }
         .task { await load() }
     }
 
@@ -182,22 +199,6 @@ struct RateFreerSheet: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 8)
-            Button("Cancel", action: onCancel).keyboardShortcut(.cancelAction)
-            Button {
-                Task { await send() }
-            } label: {
-                if carving {
-                    ProgressView().controlSize(.small)
-                } else {
-                    Label(
-                        rate == .good ? "Rate good" : "Rate bad",
-                        systemImage: rate == .good ? "hand.thumbsup.fill" : "hand.thumbsdown.fill"
-                    )
-                }
-            }
-            .buttonStyle(.borderedProminent)
-            .tint(rate == .good ? .green : .red)
-            .disabled(!canSend)
         }
         .padding(12)
     }

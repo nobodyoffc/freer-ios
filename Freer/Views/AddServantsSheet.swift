@@ -58,6 +58,11 @@ struct AddServantsSheet: View {
             footer
         }
         .sheetFrame(minWidth: 560, minHeight: 460)
+        .bottomBar(back: { onCancel() }) {
+            Button(selected.count > 1 ? "Add \(selected.count)" : "Add") { add() }
+                .keyboardShortcut(.defaultAction)
+                .disabled(selected.isEmpty)
+        }
         .task {
             guard !loaded else { return }
             await load()
@@ -214,12 +219,6 @@ struct AddServantsSheet: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer()
-            Button("Cancel", role: .cancel) { onCancel() }
-                .keyboardShortcut(.cancelAction)
-            Button(selected.count > 1 ? "Add \(selected.count)" : "Add") { add() }
-                .keyboardShortcut(.defaultAction)
-                .buttonStyle(.borderedProminent)
-                .disabled(selected.isEmpty)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)

@@ -97,6 +97,11 @@ struct CreateMultisigSheet: View {
             footer
         }
         .sheetFrame(minWidth: 600, minHeight: 620)
+        .bottomBar(back: { onCancel() }) {
+            Button("Create") { Task { await confirmAndCreate() } }
+                .keyboardShortcut(.defaultAction)
+                .disabled(group == nil || blockReason != nil)
+        }
         .onAppear(perform: seedWithMain)
         .sheet(item: $pick) { request in
             FidPickerSheet(session: session, request: request) { picked in
@@ -318,12 +323,6 @@ struct CreateMultisigSheet: View {
             }
             .frame(maxWidth: 260)
             Spacer()
-            Button("Cancel", role: .cancel) { onCancel() }
-                .keyboardShortcut(.cancelAction)
-            Button("Create") { Task { await confirmAndCreate() } }
-                .keyboardShortcut(.defaultAction)
-                .buttonStyle(.borderedProminent)
-                .disabled(group == nil || blockReason != nil)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)

@@ -123,6 +123,7 @@ struct FilesView: View {
         }
         .padding()
         .sheetFrame(minWidth: 560)
+        .bottomBar { actions }
         .onAppear(perform: reload)
         .onDrop(of: [.fileURL], isTargeted: $isDropTargeted) { providers in
             handleDrop(providers)
@@ -198,20 +199,23 @@ struct FilesView: View {
             SearchField(String(localized: "Search name, description, type, location…"), text: $search, maxWidth: 320)
 
             Spacer()
-
-            Button {
-                showImport = true
-            } label: {
-                Label("Import record", systemImage: "square.and.arrow.down.on.square")
-            }
-            .help("Paste or open a HAT record shared from another device")
-
-            Button(action: addFiles) {
-                Label("Add files", systemImage: "plus")
-            }
-            .buttonStyle(.borderedProminent)
-            .help("Reference files on this device — they are not copied")
         }
+    }
+
+    /// The bottom bar, primary last — and Back after it.
+    @ViewBuilder
+    private var actions: some View {
+        Button {
+            showImport = true
+        } label: {
+            Label("Import record", systemImage: "square.and.arrow.down.on.square")
+        }
+        .help("Paste or open a HAT record shared from another device")
+
+        Button(action: addFiles) {
+            Label("Add files", systemImage: "plus")
+        }
+        .help("Reference files on this device — they are not copied")
     }
 
     @ViewBuilder

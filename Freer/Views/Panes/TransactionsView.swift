@@ -35,6 +35,7 @@ struct TransactionsView: View {
         }
         .padding()
         .sheetFrame(minWidth: 480)
+        .bottomBar()
         .onAppear {
             loadCacheIfNeeded()
             Task { await refresh() }

@@ -162,17 +162,16 @@ struct AddWatchedFidSheet: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 Spacer()
-                Button("Cancel", role: .cancel) { onCancel() }
-                    .keyboardShortcut(.cancelAction)
-                Button("Add") { add() }
-                    .keyboardShortcut(.defaultAction)
-                    .buttonStyle(.borderedProminent)
-                    .disabled(!canAdd)
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
         }
         .sheetFrame(minWidth: 540, minHeight: 420)
+        .bottomBar(back: { onCancel() }) {
+            Button("Add") { add() }
+                .keyboardShortcut(.defaultAction)
+                .disabled(!canAdd)
+        }
         .sheet(isPresented: $showScan) {
             QrScanSheet(title: String(localized: "Scan FID")) { scanned in
                 fid = scanned

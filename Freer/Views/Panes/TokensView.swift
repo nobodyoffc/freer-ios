@@ -190,6 +190,7 @@ struct TokensView: View {
         }
         .padding()
         .sheetFrame(minWidth: 700)
+        .bottomBar { actions }
         .onAppear {
             guard !didAutoLoad else { return }
             didAutoLoad = true
@@ -313,41 +314,45 @@ struct TokensView: View {
                 .fixedSize()
                 .help("Take this text to the chain index, with a field and sort of your choosing")
             }
-
-            if tab != .history {
-                Button {
-                    showingHidden.toggle()
-                } label: {
-                    Label(showingHidden ? "Hidden" : "Visible",
-                          systemImage: showingHidden ? "eye.slash" : "eye")
-                }
-                .help(showingHidden
-                      ? "Showing what you hid. Hiding is local to this device and changes nothing on the chain."
-                      : "Show the rows you have hidden")
-            }
-
-            Button {
-                Task { await refresh() }
-            } label: {
-                if loading {
-                    ProgressView().controlSize(.small)
-                } else {
-                    Label("Refresh", systemImage: "arrow.clockwise")
-                }
-            }
-            .disabled(loading)
-
-            Button {
-                showDeploySheet = true
-            } label: {
-                Label("Deploy", systemImage: "plus")
-            }
-            .buttonStyle(.borderedProminent)
-            .disabled(!session.canSign)
-            .help(session.canSign
-                  ? "Deploy a new token — its rules are permanent"
-                  : "Watch-only identity — no key to sign a carve with")
         }
+    }
+
+    /// The bottom bar, primary last — and Back after it.
+    @ViewBuilder
+    private var actions: some View {
+        if tab != .history {
+            Button {
+                showingHidden.toggle()
+            } label: {
+                Label(showingHidden ? "Hidden" : "Visible",
+                      systemImage: showingHidden ? "eye.slash" : "eye")
+            }
+            .help(showingHidden
+                  ? "Showing what you hid. Hiding is local to this device and changes nothing on the chain."
+                  : "Show the rows you have hidden")
+        }
+
+        Button {
+            Task { await refresh() }
+        } label: {
+            if loading {
+                ProgressView().controlSize(.small)
+            } else {
+                Label("Refresh", systemImage: "arrow.clockwise")
+            }
+        }
+        .disabled(loading)
+
+        Button {
+            showDeploySheet = true
+        } label: {
+            Label("Deploy", systemImage: "plus")
+                .labelStyle(.titleAndIcon)
+        }
+        .disabled(!session.canSign)
+        .help(session.canSign
+              ? "Deploy a new token — its rules are permanent"
+              : "Watch-only identity — no key to sign a carve with")
     }
 
     private var searchPlaceholder: String {

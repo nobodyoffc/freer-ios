@@ -42,7 +42,6 @@ struct SymkeyLedgerSheet: View {
             HStack {
                 Text("Symkey exchange").font(.title3.bold())
                 Spacer()
-                Button("Done", action: onClose).keyboardShortcut(.defaultAction)
             }
 
             Text(explanation)
@@ -69,6 +68,7 @@ struct SymkeyLedgerSheet: View {
         }
         .padding(20)
         .sheetFrame(width: 660, height: 480)
+        .bottomBar(back: onClose)
         .onAppear(perform: load)
     }
 

@@ -403,28 +403,27 @@ struct PublishServiceSheet: View {
                     .foregroundStyle(.orange)
                     .fixedSize(horizontal: false, vertical: true)
             }
-
-            HStack {
-                Button("Cancel") { onDone(.cancelled) }
-                Spacer()
-                if busy { ProgressView().controlSize(.small) }
-                if !target.isUpdate {
-                    // An on-chain record has no draft to fall back to:
-                    // saving a "draft" of something already published
-                    // would make a second row claiming to be the same
-                    // record.
-                    Button(target.service == nil ? "Save draft" : "Save changes") { saveDraft() }
-                        .disabled(busy || trimmedName.isEmpty)
-                }
-                Button(target.isUpdate ? "Update on chain" : "Publish on chain") {
-                    Task { await carve() }
-                }
-                .keyboardShortcut(.defaultAction)
-                .disabled(!canCarve)
-            }
         }
         .padding(20)
         .sheetFrame(width: 640)
+        .bottomBar(back: { onDone(.cancelled) }) {
+            if busy { ProgressView().controlSize(.small) }
+
+            if !target.isUpdate {
+                // An on-chain record has no draft to fall back to:
+                // saving a "draft" of something already published
+                // would make a second row claiming to be the same
+                // record.
+                Button(target.service == nil ? "Save draft" : "Save changes") { saveDraft() }
+                    .disabled(busy || trimmedName.isEmpty)
+            }
+
+            Button(target.isUpdate ? "Update on chain" : "Publish on chain") {
+                Task { await carve() }
+            }
+            .keyboardShortcut(.defaultAction)
+            .disabled(!canCarve)
+        }
         .frame(minHeight: 500, maxHeight: 780)
         .onAppear { showPricing = !pricing.isEmpty }
         .sheet(item: $pick) { request in
@@ -865,16 +864,17 @@ struct CodePickerSheet: View {
             }
 
             HStack {
-                Button("Cancel") { onCancel() }
                 Spacer()
                 Text("\(selection.count) selected").font(.caption).foregroundStyle(.secondary)
-                Button("Add") { onPick(Array(selection)) }
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(selection.isEmpty)
             }
         }
         .padding(20)
         .sheetFrame(width: 560)
+        .bottomBar(back: { onCancel() }) {
+            Button("Add") { onPick(Array(selection)) }
+                .keyboardShortcut(.defaultAction)
+                .disabled(selection.isEmpty)
+        }
         .frame(minHeight: 380, maxHeight: 620)
         .onAppear {
             guard !didLoad else { return }
@@ -1235,22 +1235,18 @@ struct ServiceDetailSheet: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
-
-            HStack {
-                Button {
-                    rating = true
-                } label: {
-                    Label("Rate", systemImage: "star")
-                }
-                .disabled(!canRate)
-                .help(rateHelp)
-                Spacer()
-                Button("Done", action: onClose)
-                    .keyboardShortcut(.defaultAction)
-            }
         }
         .padding(20)
         .sheetFrame(width: 560)
+        .bottomBar(back: onClose) {
+            Button {
+                rating = true
+            } label: {
+                Label("Rate", systemImage: "star")
+            }
+            .disabled(!canRate)
+            .help(rateHelp)
+        }
         // This sheet draws FIDs of its own, and a sheet cannot present
         // another sheet through the window's host — so it installs one.
         // See ``View/fidDetailsHost(session:)``.
@@ -1431,18 +1427,15 @@ struct CloseServiceSheet: View {
             if let error {
                 CopyableText(error, font: .caption).foregroundStyle(.red)
             }
-
-            HStack {
-                Button("Cancel") { onDone(nil) }
-                Spacer()
-                if busy { ProgressView().controlSize(.small) }
-                Button("Close permanently", role: .destructive) { Task { await close() } }
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(busy || services.isEmpty || !session.canSign)
-            }
         }
         .padding(20)
         .sheetFrame(width: 500)
+        .bottomBar(back: { onDone(nil) }) {
+            if busy { ProgressView().controlSize(.small) }
+            Button("Close permanently", role: .destructive) { Task { await close() } }
+                .keyboardShortcut(.defaultAction)
+                .disabled(busy || services.isEmpty || !session.canSign)
+        }
     }
 
     private func close() async {

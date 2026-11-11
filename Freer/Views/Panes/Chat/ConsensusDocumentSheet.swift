@@ -151,20 +151,16 @@ struct ConsensusDocumentSheet: View {
                 CopyableText(error, font: .caption).foregroundStyle(.red)
                     .fixedSize(horizontal: false, vertical: true)
             }
-
-            HStack {
-                Spacer()
-                Button(editable ? "Cancel" : "Close", role: .cancel) { onClose() }
-                if editable {
-                    Button(saving ? "Saving…" : "Save") { save() }
-                        .buttonStyle(.borderedProminent)
-                        .keyboardShortcut(.defaultAction)
-                        .disabled(saving || loading || text.isEmpty)
-                }
-            }
         }
         .padding(20)
         .sheetFrame(width: 640)
+        .bottomBar(back: { onClose() }) {
+            if editable {
+                Button(saving ? "Saving…" : "Save") { save() }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(saving || loading || text.isEmpty)
+            }
+        }
         .task(load)
     }
 

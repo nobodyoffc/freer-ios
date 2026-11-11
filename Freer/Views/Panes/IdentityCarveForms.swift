@@ -599,13 +599,12 @@ struct IdentityCarveSheet: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 Spacer()
-                Button("Close", role: .cancel) { onCancel() }
-                    .keyboardShortcut(.cancelAction)
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
         }
         .sheetFrame(minWidth: 540, minHeight: kind == .cid ? 320 : 400)
+        .bottomBar(back: { onCancel() })
     }
 
     private var explanation: String {

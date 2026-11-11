@@ -40,7 +40,6 @@ struct MessageRequestsSheet: View {
             HStack {
                 Text("Message requests").font(.title3.bold())
                 Spacer()
-                Button("Done", action: onClose).keyboardShortcut(.defaultAction)
             }
 
             Text("Nobody here is in a conversation yet. Their messages are stored on this device and nothing about them appears in your chat list until you accept.")
@@ -68,6 +67,7 @@ struct MessageRequestsSheet: View {
         }
         .padding(20)
         .sheetFrame(width: 640, height: 440)
+        .bottomBar(back: onClose)
         // Every request is from a FID, and deciding what to do about a
         // stranger is exactly when their record is worth reading.
         .fidDetailsHost(session: session)

@@ -24,7 +24,6 @@ struct StrangerPolicySheet: View {
             HStack {
                 Text("Who can message me").font(.title3.bold())
                 Spacer()
-                Button("Done", action: onClose).keyboardShortcut(.defaultAction)
             }
 
             Text("An FID is public, so anyone who knows yours can send you a message. This decides what happens to the first one. It applies to direct chats only — rooms, teams and squares are governed by their own membership.")
@@ -62,6 +61,7 @@ struct StrangerPolicySheet: View {
         }
         .padding(20)
         .sheetFrame(width: 560, height: 560)
+        .bottomBar(back: onClose)
         .onAppear(perform: load)
     }
 

@@ -65,6 +65,9 @@ struct TxConfirmSheet: View {
             buttons
         }
         .sheetFrame(minWidth: 580, minHeight: 540)
+        .bottomBar(back: { onAnswer(.decline) }) {
+            Button("Approve & sign") { onAnswer(.approve) }
+        }
         .sheet(isPresented: $showPicker) {
             if let session {
                 InputPickerSheet(
@@ -557,22 +560,13 @@ struct TxConfirmSheet: View {
     // MARK: - buttons
 
     private var buttons: some View {
-        HStack(spacing: 8) {
-            Button("Don't sign") { onAnswer(.decline) }
-                .keyboardShortcut(.cancelAction)
-            Spacer()
-            Text("Nothing is signed or broadcast until you approve.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Button {
-                onAnswer(.approve)
-            } label: {
-                Text("Approve & sign").frame(width: 150)
-            }
-            .buttonStyle(.borderedProminent)
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
+        // Back, in the bar below, is "Don't sign".
+        Text("Nothing is signed or broadcast until you approve.")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
     }
 
     // MARK: - bits

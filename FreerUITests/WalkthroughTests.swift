@@ -71,12 +71,36 @@ final class WalkthroughTests: XCTestCase {
         snap("launch")
         reachHome()
         snap("home")
+
+        // The backup sheet, from the getting-started card while it still
+        // asks: its icon rows, and the cipher row once there is a cipher.
+        let backup = app.buttons["Back up now"]
+        if backup.waitForExistence(timeout: 3), backup.isHittable {
+            backup.tap()
+            sleep(2)
+            snap("backup-prikey")
+            let vault = app.secureTextFields["Vault password"]
+            if vault.waitForExistence(timeout: 3) {
+                vault.tap()
+                vault.typeText("walkthrough-vault-1\n")
+                _ = app.buttons["Copy cipher"].waitForExistence(timeout: 30)
+                snap("backup-prikey-cipher")
+                if app.buttons["QR code"].firstMatch.exists {
+                    app.buttons["QR code"].firstMatch.tap()
+                    sleep(1)
+                    app.swipeUp()
+                    snap("backup-prikey-qr")
+                }
+            }
+            app.buttons["Back"].firstMatch.tap()
+            sleep(1)
+        }
+
         app.swipeUp()
         snap("home-scrolled")
         app.swipeDown()
 
-        // Every tile, in grid order. A tile that pushes a pane has a Back
-        // button to come home by; Receive is a sheet with Done.
+        // Every tile, in grid order.
         let tiles = ["News", "Convert", "Tools", "Protocol", "Service", "Code",
                      "Proof", "Token", "APP", "Overview", "Secret", "Files",
                      "Logs", "TX", "Cash", "First FCH", "Receive", "Pay",
@@ -92,9 +116,10 @@ final class WalkthroughTests: XCTestCase {
             tile.tap()
             sleep(2)
             snap("pane-" + title.replacingOccurrences(of: " ", with: "-"))
-            let back = app.navigationBars.buttons.firstMatch
-            if back.exists {
-                back.tap()
+            // Back is the last button of the bottom bar; Receive is a
+            // sheet of the shared package's, with its own Done.
+            if app.buttons["Back"].exists {
+                app.buttons["Back"].firstMatch.tap()
             } else if app.buttons["Done"].exists {
                 app.buttons["Done"].firstMatch.tap()
             } else {
@@ -107,10 +132,51 @@ final class WalkthroughTests: XCTestCase {
         app.buttons["Settings"].firstMatch.tap()
         sleep(1)
         snap("pane-Settings")
-        app.navigationBars.buttons.firstMatch.tap()
+        app.buttons["Back"].firstMatch.tap()
         app.buttons["Identity — switch the live FID"].tap()
         sleep(1)
         snap("person-menu")
+    }
+
+    /// A pane's bottom bar and a sheet's: opens a few panes, and from
+    /// each the sheet its primary button presents, then backs out of both
+    /// with the bars' own Back. Run after ``testWalkthrough()`` has made
+    /// the vault.
+    func testBottomBarScreens() {
+        app.launchArguments += ["-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
+        app.launch()
+        reachHome()
+        // The topmost Back: a sheet's, when one is up over a pane.
+        func back() {
+            let all = app.buttons.matching(identifier: "Back").allElementsBoundByIndex
+            XCTAssertFalse(all.isEmpty, "a Back button")
+            all.last?.tap()
+            sleep(1)
+        }
+        let stops = [("Cash", "More"), ("Contact", "Add"), ("Cmail", "Write"), ("Token", "Deploy"),
+                     ("Statement", "Declare"), ("Secret", "Add"), ("Pay", "Advanced")]
+        for (title, primary) in stops {
+            let tile = app.buttons[title].firstMatch
+            for _ in 0..<3 where !(tile.exists && tile.isHittable) { app.swipeUp() }
+            tile.tap()
+            sleep(2)
+            snap("bar-" + title)
+            let button = app.buttons[primary].firstMatch
+            XCTAssertTrue(button.exists, "\(primary) in the bottom bar of \(title)")
+            if button.isEnabled {
+                button.tap()
+                sleep(1)
+                snap("bar-" + title + "-" + primary)
+                if title == "Cash" {
+                    app.buttons["Refresh"].firstMatch.tap()
+                    sleep(1)
+                } else {
+                    back()
+                }
+            }
+            back()
+        }
+        XCTAssertTrue(app.buttons["Lock vault"].exists, "home again")
     }
 
     /// The same app in Simplified Chinese: the unlock screen, the home
@@ -146,7 +212,7 @@ final class WalkthroughTests: XCTestCase {
             tile.tap()
             sleep(2)
             snap("zh-" + title)
-            app.navigationBars.buttons.firstMatch.tap()
+            app.buttons["返回"].firstMatch.tap()
             sleep(1)
         }
         app.buttons["设置"].firstMatch.tap()
@@ -160,19 +226,45 @@ final class WalkthroughTests: XCTestCase {
         // Short drags, not swipes: the form only holds the rows on screen,
         // and a flick can carry the one being looked for straight past.
         let top = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.45))
-        let bottom = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.7))
-        for _ in 0..<30 where !(language.exists && language.isHittable) {
+        let bottom = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.6))
+        // Until the label is in the upper part of the form, so the picker
+        // under it is clear of the bottom bar.
+        for _ in 0..<50 where !(language.exists && language.isHittable && language.frame.minY < 480) {
             bottom.press(forDuration: 0.05, thenDragTo: top)
         }
-        // One more, so the picker under the label is clear of the screen's edge.
-        bottom.press(forDuration: 0.05, thenDragTo: top)
         XCTAssertTrue(language.exists, "the Language setting")
         snap("zh-语言")
-        // Theme sits above Language and reads Follow system too: the
-        // language picker is the second of the two.
+        // Theme sits above Language and reads Follow system too, when it
+        // is on screen: the language picker is the one under its label.
         let followers = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "跟随系统"))
-        XCTAssertEqual(followers.count, 2, "Theme and Language, both on Follow system")
-        let picker = followers.element(boundBy: 1)
+        func languagePicker() -> XCUIElement? {
+            followers.allElementsBoundByIndex
+                .filter { $0.frame.minY >= language.frame.minY && $0.frame.width <= 200 }
+                .min { $0.frame.minY < $1.frame.minY }
+        }
+        // Open the picker reading English and choose Follow system: the
+        // way back at the end of this test, and the repair at its start
+        // when an earlier run stopped halfway and left English behind.
+        func followSystem() {
+            app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "English")).firstMatch.tap()
+            sleep(1)
+            snap("zh-语言-menu")
+            // Up to two controls read Follow system now: Theme's picker on
+            // the page, and the item in the open menu. The menu's rows are
+            // the wide ones.
+            let choices = app.buttons.matching(NSPredicate(format: "label == %@", "跟随系统")).allElementsBoundByIndex
+            if let item = choices.first(where: { $0.frame.width > 200 }) {
+                item.tap()
+            } else {
+                XCTFail("no Follow system item in the language menu")
+            }
+            sleep(1)
+        }
+        if languagePicker() == nil { followSystem() }
+        guard let picker = languagePicker() else {
+            XCTFail("Language on Follow system")
+            return
+        }
         picker.tap()
         app.buttons["English"].tap()
         sleep(1)
@@ -181,18 +273,7 @@ final class WalkthroughTests: XCTestCase {
             app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "下次启动时显示新语言")).firstMatch.exists,
             "the restart note"
         )
-        app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "English")).firstMatch.tap()
-        sleep(1)
-        snap("zh-语言-menu")
-        // Two controls read Follow system now: Theme's picker on the page,
-        // and the item in the open menu. The menu's rows are the wide ones.
-        let choices = app.buttons.matching(NSPredicate(format: "label == %@", "跟随系统")).allElementsBoundByIndex
-        if let item = choices.first(where: { $0.frame.width > 200 }) {
-            item.tap()
-        } else {
-            XCTFail("no Follow system item in the language menu")
-        }
-        sleep(1)
-        XCTAssertEqual(followers.count, 2, "Language back on Follow system")
+        followSystem()
+        XCTAssertNotNil(languagePicker(), "Language back on Follow system")
     }
 }

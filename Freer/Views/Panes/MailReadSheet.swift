@@ -40,10 +40,25 @@ struct MailReadSheet: View {
                 .padding(20)
             }
 
-            Divider()
-            footer
         }
         .sheetFrame(width: 620, height: 560)
+        .bottomBar(back: { onClose() }) {
+            Button(role: mail.isDeleted ? nil : .destructive) {
+                onDelete(mail)
+            } label: {
+                Label(mail.isDeleted ? "Recover…" : "Delete…",
+                      systemImage: mail.isDeleted ? "arrow.uturn.backward" : "trash")
+            }
+            if !mail.isDeleted {
+                Button {
+                    onReply(mail)
+                } label: {
+                    Label("Reply", systemImage: "arrowshape.turn.up.left")
+                }
+                .disabled(!session.canSign)
+                .keyboardShortcut(.defaultAction)
+            }
+        }
         // This sheet draws a FID of its own, and a sheet cannot present
         // another sheet through the window's host — so it installs one.
         .fidDetailsHost(session: session)
@@ -185,34 +200,6 @@ struct MailReadSheet: View {
                 )
             }
         }
-    }
-
-    private var footer: some View {
-        HStack {
-            Button(role: mail.isDeleted ? nil : .destructive) {
-                onDelete(mail)
-            } label: {
-                Label(mail.isDeleted ? "Recover…" : "Delete…",
-                      systemImage: mail.isDeleted ? "arrow.uturn.backward" : "trash")
-            }
-
-            Spacer()
-
-            Button("Close") { onClose() }
-                .keyboardShortcut(.cancelAction)
-
-            if !mail.isDeleted {
-                Button {
-                    onReply(mail)
-                } label: {
-                    Label("Reply", systemImage: "arrowshape.turn.up.left")
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(!session.canSign)
-                .keyboardShortcut(.defaultAction)
-            }
-        }
-        .padding(20)
     }
 
     private static let dateFormatter: DateFormatter = {

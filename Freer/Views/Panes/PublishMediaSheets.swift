@@ -361,25 +361,20 @@ struct PublishMediaComposer: View {
                     .font(.caption)
                     .foregroundStyle(.orange)
             }
-
-            HStack {
-                Button("Cancel") { onDone(.cancelled) }
-                    .keyboardShortcut(.cancelAction)
-                Spacer()
-                if !isNewEdition {
-                    Button("Save draft") { saveDraft() }
-                        .disabled(busy || title.trimmingCharacters(in: .whitespaces).isEmpty)
-                        .help("Keeps the record on this device. The file is registered where it lies; nothing is uploaded and nothing is carved.")
-                }
-                Button(isNewEdition ? "Publish edition" : "Publish") {
-                    Task { await publish() }
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(!canPublish)
-            }
         }
         .padding(20)
         .sheetFrame(width: 640)
+        .bottomBar(back: { onDone(.cancelled) }) {
+            if !isNewEdition {
+                Button("Save draft") { saveDraft() }
+                    .disabled(busy || title.trimmingCharacters(in: .whitespaces).isEmpty)
+                    .help("Keeps the record on this device. The file is registered where it lies; nothing is uploaded and nothing is carved.")
+            }
+            Button(isNewEdition ? "Publish edition" : "Publish") {
+                Task { await publish() }
+            }
+            .disabled(!canPublish)
+        }
     }
 
     private var formatPlaceholder: String {
@@ -634,31 +629,27 @@ struct MediaViewerSheet: View {
                 }
                 .padding(.trailing, 4)
             }
-
-            HStack {
-                if localURL != nil {
-                    // Open rather than reveal: the fetched file is
-                    // named by its DID and has no extension, so the
-                    // Finder can neither type it nor say what it is.
-                    Button("Open") {
-                        if let url = localURL { FileOpening.open(url, named: suggestedName) }
-                    }
-                    Button("Save a copy…") { saveCopy() }
-                }
-                Button {
-                    rating = true
-                } label: {
-                    Label("Rate", systemImage: "star")
-                }
-                .disabled(!canRate)
-                .help(rateHelp)
-                Spacer()
-                Button("Close") { onClose() }
-                    .keyboardShortcut(.cancelAction)
-            }
         }
         .padding(20)
         .sheetFrame(width: 720, height: 760)
+        .bottomBar(back: { onClose() }) {
+            if localURL != nil {
+                // Open rather than reveal: the fetched file is
+                // named by its DID and has no extension, so the
+                // Finder can neither type it nor say what it is.
+                Button("Open") {
+                    if let url = localURL { FileOpening.open(url, named: suggestedName) }
+                }
+                Button("Save a copy…") { saveCopy() }
+            }
+            Button {
+                rating = true
+            } label: {
+                Label("Rate", systemImage: "star")
+            }
+            .disabled(!canRate)
+            .help(rateHelp)
+        }
         // This sheet draws FIDs of its own, and a sheet cannot present
         // another sheet through the window's host — so it installs one.
         .fidDetailsHost(session: session)

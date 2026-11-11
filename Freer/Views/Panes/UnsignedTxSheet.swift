@@ -75,42 +75,30 @@ struct UnsignedTxSheet: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             .padding(16)
-
-            Divider()
-
-            HStack(spacing: 8) {
-                Button {
-                    copyJson()
-                } label: {
-                    Label(copied ? "Copied" : "Copy JSON",
-                          systemImage: copied ? "checkmark.circle.fill" : "doc.on.doc")
-                }
-                .foregroundStyle(copied ? .green : .primary)
-
-                Button {
-                    saveJson()
-                } label: {
-                    Label("Save…", systemImage: "square.and.arrow.down")
-                }
-
-                Button {
-                    showQr = true
-                } label: {
-                    Label("Show QR", systemImage: "qrcode")
-                }
-                .help("Render the document as QR codes — long content is split across several; scan them all on the signer to merge.")
-
-                Spacer()
-
-                Button("Done") { onDone() }
-                    .keyboardShortcut(.defaultAction)
-                    .buttonStyle(.borderedProminent)
-            }
-            .disabled(json.isEmpty && encodeError == nil)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
         }
         .sheetFrame(minWidth: 560)
+        .bottomBar(back: { onDone() }) {
+            Button {
+                copyJson()
+            } label: {
+                Label(copied ? "Copied" : "Copy JSON",
+                      systemImage: copied ? "checkmark.circle.fill" : "doc.on.doc")
+            }
+            .foregroundStyle(copied ? .green : .primary)
+
+            Button {
+                saveJson()
+            } label: {
+                Label("Save…", systemImage: "square.and.arrow.down")
+            }
+
+            Button {
+                showQr = true
+            } label: {
+                Label("Show QR", systemImage: "qrcode")
+            }
+            .help("Render the document as QR codes — long content is split across several; scan them all on the signer to merge.")
+        }
         .onAppear { encode() }
         .sheet(isPresented: $showQr) {
             QrDisplaySheet(content: json) { showQr = false }

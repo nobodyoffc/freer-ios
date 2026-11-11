@@ -124,6 +124,10 @@ struct InputPickerSheet: View {
             footer
         }
         .sheetFrame(minWidth: 600, minHeight: 600)
+        .bottomBar(back: onCancel) {
+            Button("Use these") { onPick(selectedRows) }
+                .disabled(!canUse)
+        }
         .onAppear(perform: load)
     }
 
@@ -320,11 +324,6 @@ struct InputPickerSheet: View {
                 pricingLine
             }
             Spacer()
-            Button("Cancel", action: onCancel)
-                .keyboardShortcut(.cancelAction)
-            Button("Use these") { onPick(selectedRows) }
-                .buttonStyle(.borderedProminent)
-                .disabled(!canUse)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)

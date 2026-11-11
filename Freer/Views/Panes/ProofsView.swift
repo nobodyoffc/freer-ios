@@ -143,6 +143,7 @@ struct ProofsView: View {
         }
         .padding()
         .sheetFrame(minWidth: 640)
+        .bottomBar { actions }
         .onAppear {
             guard !didAutoLoad else { return }
             didAutoLoad = true
@@ -285,38 +286,44 @@ struct ProofsView: View {
                 .menuStyle(.borderlessButton)
                 .fixedSize()
                 .help("Take this text to the chain index, with a field and sort of your choosing")
-
-                Button {
-                    Task { await refresh() }
-                } label: {
-                    if loading {
-                        ProgressView().controlSize(.small)
-                    } else {
-                        Label("Refresh", systemImage: "arrow.clockwise")
-                    }
-                }
-                .disabled(loading)
             }
-
-            if tab == .live && session.canSign {
-                Button(selecting ? "Done" : "Select") {
-                    selecting.toggle()
-                    if !selecting { selection = [] }
-                }
-                .help("Tick several proofs and destroy them in one carve — one miner fee for the batch")
-            }
-
-            Button {
-                showIssueSheet = true
-            } label: {
-                Label("Issue", systemImage: "plus")
-            }
-            .buttonStyle(.borderedProminent)
-            .disabled(!session.canSign)
-            .help(session.canSign
-                  ? "Write a new proof"
-                  : "Watch-only identity — no key to sign a carve with")
         }
+    }
+
+    /// The bottom bar, primary last — and Back after it.
+    @ViewBuilder
+    private var actions: some View {
+        if tab != .drafts {
+            Button {
+                Task { await refresh() }
+            } label: {
+                if loading {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Label("Refresh", systemImage: "arrow.clockwise")
+                }
+            }
+            .disabled(loading)
+        }
+
+        if tab == .live && session.canSign {
+            Button(selecting ? "Done" : "Select") {
+                selecting.toggle()
+                if !selecting { selection = [] }
+            }
+            .help("Tick several proofs and destroy them in one carve — one miner fee for the batch")
+        }
+
+        Button {
+            showIssueSheet = true
+        } label: {
+            Label("Issue", systemImage: "plus")
+                .labelStyle(.titleAndIcon)
+        }
+        .disabled(!session.canSign)
+        .help(session.canSign
+              ? "Write a new proof"
+              : "Watch-only identity — no key to sign a carve with")
     }
 
     private var chainSearchChip: some View {

@@ -317,12 +317,8 @@ struct ChatView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
           if readingOnPhone {
-            Button {
-                phoneReading = false
-            } label: {
-                Label(String(localized: "All \(style.title)"), systemImage: "chevron.left")
-            }
-            .buttonStyle(.borderless)
+            // Back, in the bar below the composer, returns to the list —
+            // where Android's chat screen has it too.
             transcript
           } else {
             PaneHeader(session: session)
@@ -389,6 +385,9 @@ struct ChatView: View {
         }
         .padding()
         .sheetFrame(minWidth: 720)
+        .bottomBar(back: readingOnPhone ? { phoneReading = false } : nil) {
+            if !readingOnPhone { listActions }
+        }
         .onAppear {
             // An Overview tile can ask for a specific flavour. Consume it
             // before the first reload so the pane never paints the wrong
@@ -827,53 +826,54 @@ struct ChatView: View {
 
             SearchField(String(localized: "Search \(style.title.lowercased())…"), text: $search, minWidth: 140)
                 .help("Matches the name, the id, and the last message shown")
+        }
+    }
 
-            // Only the on-chain flavours have anything to refresh: a
-            // team's and a square's membership is the chain's answer,
-            // while a room and a P2P chat are made here.
-            if style.syncsFromChain {
-                Button {
-                    Task { await syncGroups() }
-                } label: {
-                    if syncing {
-                        ProgressView().controlSize(.small)
-                    } else {
-                        Label("Refresh", systemImage: "arrow.clockwise")
-                    }
-                }
-                .disabled(syncing)
-                .help("Pull the \(style.title.lowercased()) this FID belongs to from the chain")
-            }
+    /// The list's bottom bar: the tab's menu first, as Android has its ⋮,
+    /// and the new-conversation button last.
+    @ViewBuilder
+    private var listActions: some View {
+        tabMenu
 
+        if style.syncsFromChain {
             Button {
-                Task { await exchange() }
+                Task { await syncGroups() }
             } label: {
-                if delivering {
+                if syncing {
                     ProgressView().controlSize(.small)
                 } else {
-                    Label("Send & receive", systemImage: "arrow.up.arrow.down")
+                    Label("Refresh", systemImage: "arrow.clockwise")
                 }
             }
-            .disabled(delivering || !session.canSign)
-            .help("Park queued messages at their recipients' DOCKs, and collect whatever ours is holding for us")
+            .disabled(syncing)
+            .help("Pull the \(style.title.lowercased()) this FID belongs to from the chain")
+        }
 
-            if mode != .p2p, !conversations.isEmpty {
-                Button {
-                    checked = checked == nil ? [] : nil
-                } label: {
-                    Label(checked == nil ? "Select" : "Done", systemImage: "checklist")
-                }
-                .help("Choose several \(style.title.lowercased()) to leave, close or disband at once")
+        Button {
+            Task { await exchange() }
+        } label: {
+            if delivering {
+                ProgressView().controlSize(.small)
+            } else {
+                Label("Send & receive", systemImage: "arrow.up.arrow.down")
             }
+        }
+        .disabled(delivering || !session.canSign)
+        .help("Park queued messages at their recipients' DOCKs, and collect whatever ours is holding for us")
 
+        if mode != .p2p, !conversations.isEmpty {
             Button {
-                showNewChat = true
+                checked = checked == nil ? [] : nil
             } label: {
-                Label(style.newActionTitle, systemImage: "square.and.pencil")
+                Label(checked == nil ? "Select" : "Done", systemImage: "checklist")
             }
-            .buttonStyle(.borderedProminent)
+            .help("Choose several \(style.title.lowercased()) to leave, close or disband at once")
+        }
 
-            tabMenu
+        Button {
+            showNewChat = true
+        } label: {
+            Label(style.newActionTitle, systemImage: "square.and.pencil")
         }
     }
 
@@ -904,9 +904,8 @@ struct ChatView: View {
                 Text("Nothing here yet")
             }
         } label: {
-            Image(systemName: "ellipsis.circle")
+            Label("More", systemImage: "ellipsis")
         }
-        .menuStyle(.borderlessButton)
         .fixedSize()
     }
 

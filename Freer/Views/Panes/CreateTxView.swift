@@ -178,7 +178,9 @@ struct CreateTxView: View {
                 .padding(.bottom, 12)
             }
         }
+        .padding(.horizontal)
         .sheetFrame(minWidth: 580)
+        .bottomBar(back: { appState.sendMode = .send }) { actions }
         .task { await load() }
         .onChange(of: session.liveFid) { _, _ in
             clearAll()
@@ -235,46 +237,6 @@ struct CreateTxView: View {
 
     private var toolbar: some View {
         FlowRow(spacing: 8) {
-            // The way back. Compose is entered from Send's Advanced
-            // button now rather than a tab strip, so without this there
-            // is no route to the simple form short of leaving the pane.
-            Button {
-                appState.sendMode = .send
-            } label: {
-                Label("Send", systemImage: "chevron.left")
-            }
-            .help("Back to the simple Send form")
-
-            Button {
-                clearAll()
-            } label: {
-                Label("Clear", systemImage: "trash")
-            }
-            .help("Empty every field and start again")
-            .disabled(isEmptyDraft)
-
-            Button {
-                copyDocument()
-            } label: {
-                Label("Copy JSON", systemImage: "doc.on.doc")
-            }
-            .help("Copy the unsigned document — paste it into the Android app, or into a signer")
-            .disabled(inputSlots.isEmpty && outputSlots.isEmpty)
-
-            Menu {
-                Button("Transaction JSON…") {
-                    importKind = .transaction
-                    showImport = true
-                }
-                Button("Payee list…") {
-                    importKind = .payees
-                    showImport = true
-                }
-            } label: {
-                Label("Import", systemImage: "square.and.arrow.down")
-            }
-            .fixedSize()
-            .help("Load a document composed elsewhere, or a list of payees to pay in one go")
 
             Toggle(isOn: $lockMode) {
                 Label("Time lock", systemImage: lockMode ? "lock" : "lock.open")
@@ -291,9 +253,45 @@ struct CreateTxView: View {
             Spacer()
 
             if loading { ProgressView().controlSize(.small) }
-
-            submitButton
         }
+    }
+
+    /// The bottom bar: the document's tools, then the act itself. Back
+    /// returns to the simple Send form, which is where Compose was entered from.
+    @ViewBuilder
+    private var actions: some View {
+        Button {
+            clearAll()
+        } label: {
+            Label("Clear", systemImage: "trash")
+        }
+        .help("Empty every field and start again")
+        .disabled(isEmptyDraft)
+
+        Button {
+            copyDocument()
+        } label: {
+            Label("Copy JSON", systemImage: "doc.on.doc")
+        }
+        .help("Copy the unsigned document — paste it into the Android app, or into a signer")
+        .disabled(inputSlots.isEmpty && outputSlots.isEmpty)
+
+        Menu {
+            Button("Transaction JSON…") {
+                importKind = .transaction
+                showImport = true
+            }
+            Button("Payee list…") {
+                importKind = .payees
+                showImport = true
+            }
+        } label: {
+            Label("Import", systemImage: "square.and.arrow.down")
+        }
+        .fixedSize()
+        .help("Load a document composed elsewhere, or a list of payees to pay in one go")
+
+        submitButton
     }
 
     private var submitButton: some View {
@@ -314,7 +312,6 @@ struct CreateTxView: View {
                     }
                 }
                 .keyboardShortcut(.defaultAction)
-                .buttonStyle(.borderedProminent)
                 .disabled(!canSubmit)
                 .help(inputSlots.isEmpty
                       ? "No inputs named — the wallet will choose coins the way the Send tab does"
@@ -326,7 +323,6 @@ struct CreateTxView: View {
                     Text(busy ? "Building…" : "Build unsigned").frame(width: 130)
                 }
                 .keyboardShortcut(.defaultAction)
-                .buttonStyle(.borderedProminent)
                 .disabled(!canSubmit || inputSlots.isEmpty)
                 .help("Watch-only: build the document here and sign it where the key lives. Name the inputs first — nothing can be selected without a key to spend with.")
             }
@@ -338,7 +334,7 @@ struct CreateTxView: View {
     private func inputsSection(_ quote: WalletService.AdvancedQuote) -> some View {
         GroupBox {
             VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 10) {
+                FlowRow(spacing: 10) {
                     Text("Spending")
                         .font(.callout.bold())
                         .foregroundStyle(.secondary)

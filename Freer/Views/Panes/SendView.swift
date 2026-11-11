@@ -22,9 +22,13 @@ struct SendView: View {
     }
 
     var body: some View {
+        // Padded piece by piece, not as a whole: the payment form's
+        // bottom bar has to reach the screen's edges.
         VStack(alignment: .leading, spacing: 12) {
             PaneHeader(session: session)
+                .padding([.horizontal, .top])
             Divider()
+                .padding(.horizontal)
 
             switch appState.sendMode {
             case .send:
@@ -33,7 +37,6 @@ struct SendView: View {
                 CreateTxView(session: session)
             }
         }
-        .padding()
         // The minimum width belongs here, on the pane, exactly as
         // ``SettingsView`` has it — not on the nested form view.
         .sheetFrame(minWidth: 480)
@@ -94,6 +97,8 @@ struct SendPaymentView: View {
             // `ScrollView` it is offered no height and draws nothing at all.
             form
         }
+        .padding(.horizontal)
+        .bottomBar { actions }
         // No minimum width on this inner view: it is the one structural
         // difference from ``SettingsView``, whose pane sits at the
         // height it is offered. A minimum here can have the form
@@ -216,78 +221,75 @@ struct SendPaymentView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
-
-            Section {
-                HStack(spacing: 10) {
-                    Spacer()
-
-                    // The escape hatch, kept next to the act it widens
-                    // rather than above it: you reach for Advanced when
-                    // Send's answers are wrong, which is something you
-                    // discover while filling this form in — not a peer
-                    // view to choose between before you start.
-                    Button {
-                        appState.sendMode = .compose
-                    } label: {
-                        Text("Advanced").frame(width: 100)
-                    }
-                    .help("Compose the transaction by hand — choose the coins, pay several people at once, add a message or a time lock.")
-
-                    if session.canSign {
-                        Button {
-                            sendError = nil
-                            result = nil
-                            // With the global confirmation on, the
-                            // approval dialog is about to show the
-                            // *built* transaction — inputs, fee,
-                            // change and all. Asking twice, the
-                            // second time with better information,
-                            // trains people to click through the
-                            // first one.
-                            if session.confirmBeforeSigning {
-                                Task { await runSend() }
-                            } else {
-                                showConfirm = true
-                            }
-                        } label: {
-                            if sending {
-                                HStack(spacing: 6) {
-                                    ProgressView().controlSize(.small)
-                                    Text("Sending…")
-                                }
-                                .frame(width: 120)
-                            } else {
-                                Text("Send").frame(width: 120)
-                            }
-                        }
-                        .keyboardShortcut(.defaultAction)
-                        .buttonStyle(.borderedProminent)
-                        .disabled(!canSubmit)
-                    } else {
-                        // Cold-sign path: nothing is broadcast, so no
-                        // confirm alert — building is free to redo.
-                        Button {
-                            Task { await runBuildUnsigned() }
-                        } label: {
-                            if sending {
-                                HStack(spacing: 6) {
-                                    ProgressView().controlSize(.small)
-                                    Text("Building…")
-                                }
-                                .frame(width: 160)
-                            } else {
-                                Text("Build unsigned tx").frame(width: 160)
-                            }
-                        }
-                        .keyboardShortcut(.defaultAction)
-                        .buttonStyle(.borderedProminent)
-                        .disabled(!canSubmit)
-                        .help("Select coins and build the transaction without signing — export it for cold signing.")
-                    }
-                }
-            }
         }
         .formStyle(.grouped)
+    }
+
+    /// Advanced, then the act itself — and Back after them, in the bottom
+    /// bar. Send keeps its word: it cannot be undone.
+    @ViewBuilder
+    private var actions: some View {
+        // The escape hatch, kept next to the act it widens
+        // rather than above it: you reach for Advanced when
+        // Send's answers are wrong, which is something you
+        // discover while filling this form in — not a peer
+        // view to choose between before you start.
+        Button {
+            appState.sendMode = .compose
+        } label: {
+            Text("Advanced").frame(minHeight: 30)
+        }
+        .help("Compose the transaction by hand — choose the coins, pay several people at once, add a message or a time lock.")
+
+        if session.canSign {
+            Button {
+                sendError = nil
+                result = nil
+                // With the global confirmation on, the
+                // approval dialog is about to show the
+                // *built* transaction — inputs, fee,
+                // change and all. Asking twice, the
+                // second time with better information,
+                // trains people to click through the
+                // first one.
+                if session.confirmBeforeSigning {
+                    Task { await runSend() }
+                } else {
+                    showConfirm = true
+                }
+            } label: {
+                if sending {
+                    HStack(spacing: 6) {
+                        ProgressView().controlSize(.small)
+                        Text("Sending…")
+                    }
+                    .frame(minWidth: 80, minHeight: 30)
+                } else {
+                    Text("Send").frame(minWidth: 80, minHeight: 30)
+                }
+            }
+            .keyboardShortcut(.defaultAction)
+            .disabled(!canSubmit)
+        } else {
+            // Cold-sign path: nothing is broadcast, so no
+            // confirm alert — building is free to redo.
+            Button {
+                Task { await runBuildUnsigned() }
+            } label: {
+                if sending {
+                    HStack(spacing: 6) {
+                        ProgressView().controlSize(.small)
+                        Text("Building…")
+                    }
+                    .frame(minHeight: 30)
+                } else {
+                    Text("Build unsigned tx").frame(minHeight: 30)
+                }
+            }
+            .keyboardShortcut(.defaultAction)
+            .disabled(!canSubmit)
+            .help("Select coins and build the transaction without signing — export it for cold signing.")
+        }
     }
 
     @ViewBuilder

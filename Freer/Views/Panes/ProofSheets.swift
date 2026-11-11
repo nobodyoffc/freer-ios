@@ -209,20 +209,19 @@ struct IssueProofSheet: View {
                     .foregroundStyle(.orange)
                     .fixedSize(horizontal: false, vertical: true)
             }
-
-            HStack {
-                Button("Cancel") { onDone(.cancelled) }
-                Spacer()
-                if busy { ProgressView().controlSize(.small) }
-                Button(editing == nil ? "Save draft" : "Save changes") { saveDraft() }
-                    .disabled(busy || title.trimmingCharacters(in: .whitespaces).isEmpty)
-                Button("Issue on chain") { Task { await carve() } }
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(!canCarve)
-            }
         }
         .padding(20)
         .sheetFrame(width: 560)
+        .bottomBar(back: { onDone(.cancelled) }) {
+            if busy { ProgressView().controlSize(.small) }
+
+            Button(editing == nil ? "Save draft" : "Save changes") { saveDraft() }
+                .disabled(busy || title.trimmingCharacters(in: .whitespaces).isEmpty)
+
+            Button("Issue on chain") { Task { await carve() } }
+                .keyboardShortcut(.defaultAction)
+                .disabled(!canCarve)
+        }
         .sheet(item: $pick) { request in
             FidPickerSheet(session: session, request: request) { picked in
                 if pickingOwner {
@@ -434,15 +433,10 @@ struct ProofDetailSheet: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
-
-            HStack {
-                Spacer()
-                Button("Done", action: onClose)
-                    .keyboardShortcut(.defaultAction)
-            }
         }
         .padding(20)
         .sheetFrame(width: 520)
+        .bottomBar(back: onClose)
         // This sheet draws FIDs of its own, and a sheet cannot present
         // another sheet through the window's host — so it installs one.
         // See ``View/fidDetailsHost(session:)``.
@@ -549,18 +543,15 @@ struct TransferProofSheet: View {
             if let error {
                 CopyableText(error, font: .caption).foregroundStyle(.red)
             }
-
-            HStack {
-                Button("Cancel") { onDone(nil) }
-                Spacer()
-                if busy { ProgressView().controlSize(.small) }
-                Button("Transfer") { Task { await transfer() } }
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(recipient == nil || busy || !session.canSign)
-            }
         }
         .padding(20)
         .sheetFrame(width: 460)
+        .bottomBar(back: { onDone(nil) }) {
+            if busy { ProgressView().controlSize(.small) }
+            Button("Transfer") { Task { await transfer() } }
+                .keyboardShortcut(.defaultAction)
+                .disabled(recipient == nil || busy || !session.canSign)
+        }
         .sheet(item: $pick) { request in
             FidPickerSheet(session: session, request: request) { picked in
                 recipient = picked.first

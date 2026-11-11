@@ -106,14 +106,10 @@ struct HatDetailSheet: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
-
-            HStack {
-                Spacer()
-                Button("Done", action: onDone).keyboardShortcut(.defaultAction)
-            }
         }
         .padding(20)
         .sheetFrame(width: 560, height: 520)
+        .bottomBar(back: onDone)
         .onAppear {
             record = try? session.hats.record(id: hat.id ?? "")
         }
@@ -220,26 +216,21 @@ struct HatExportSheet: View {
                     .font(.caption)
                     .foregroundStyle(.green)
             }
-
-            HStack {
-                Button {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(json, forType: .string)
-                    saved = String(localized: "Copied to the clipboard.")
-                } label: {
-                    Label("Copy", systemImage: "doc.on.doc")
-                }
-
-                Button(action: saveToFile) {
-                    Label("Save…", systemImage: "square.and.arrow.down")
-                }
-
-                Spacer()
-                Button("Done", action: onDone).keyboardShortcut(.defaultAction)
-            }
         }
         .padding(20)
         .sheetFrame(width: 560)
+        .bottomBar(back: onDone) {
+            Button {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(json, forType: .string)
+                saved = String(localized: "Copied to the clipboard.")
+            } label: {
+                Label("Copy", systemImage: "doc.on.doc")
+            }
+            Button(action: saveToFile) {
+                Label("Save…", systemImage: "square.and.arrow.down")
+            }
+        }
     }
 
     private func saveToFile() {
@@ -303,21 +294,17 @@ struct HatImportSheet: View {
                     .foregroundStyle(.orange)
                     .fixedSize(horizontal: false, vertical: true)
             }
-
-            HStack {
-                Button(action: openFile) {
-                    Label("Open file…", systemImage: "folder")
-                }
-                Spacer()
-                Button("Cancel") { onDone(nil) }
-                Button("Import") { importRecords() }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(preview.isEmpty)
-                    .keyboardShortcut(.defaultAction)
-            }
         }
         .padding(20)
         .sheetFrame(width: 560)
+        .bottomBar(back: { onDone(nil) }) {
+            Button(action: openFile) {
+                Label("Open file…", systemImage: "folder")
+            }
+            Button("Import") { importRecords() }
+                .disabled(preview.isEmpty)
+                .keyboardShortcut(.defaultAction)
+        }
     }
 
     private func parse() {

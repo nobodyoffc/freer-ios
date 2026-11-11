@@ -226,25 +226,20 @@ struct PublishTextComposer: View {
                     .font(.caption)
                     .foregroundStyle(.orange)
             }
-
-            HStack {
-                Button("Cancel") { onDone(.cancelled) }
-                    .keyboardShortcut(.cancelAction)
-                Spacer()
-                if !isNewEdition {
-                    Button("Save draft") { saveDraft() }
-                        .disabled(busy || title.trimmingCharacters(in: .whitespaces).isEmpty)
-                        .help("Keeps the work on this device. Nothing is uploaded and nothing is carved.")
-                }
-                Button(isNewEdition ? "Publish edition" : "Publish") {
-                    Task { await publish() }
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(!canPublish)
-            }
         }
         .padding(20)
         .sheetFrame(width: 640)
+        .bottomBar(back: { onDone(.cancelled) }) {
+            if !isNewEdition {
+                Button("Save draft") { saveDraft() }
+                    .disabled(busy || title.trimmingCharacters(in: .whitespaces).isEmpty)
+                    .help("Keeps the work on this device. Nothing is uploaded and nothing is carved.")
+            }
+            Button(isNewEdition ? "Publish edition" : "Publish") {
+                Task { await publish() }
+            }
+            .disabled(!canPublish)
+        }
     }
 
     // MARK: - the file
@@ -465,22 +460,18 @@ struct TextReaderSheet: View {
                 }
                 .padding(.trailing, 4)
             }
-
-            HStack {
-                Button {
-                    rating = true
-                } label: {
-                    Label("Rate", systemImage: "star")
-                }
-                .disabled(!canRate)
-                .help(rateHelp)
-                Spacer()
-                Button("Close") { onClose() }
-                    .keyboardShortcut(.cancelAction)
-            }
         }
         .padding(20)
         .sheetFrame(width: 680, height: 680)
+        .bottomBar(back: { onClose() }) {
+            Button {
+                rating = true
+            } label: {
+                Label("Rate", systemImage: "star")
+            }
+            .disabled(!canRate)
+            .help(rateHelp)
+        }
         // This sheet draws FIDs of its own, and a sheet cannot present
         // another sheet through the window's host — so it installs one.
         .fidDetailsHost(session: session)

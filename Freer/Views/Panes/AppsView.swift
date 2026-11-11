@@ -197,6 +197,7 @@ struct AppsView: View {
         }
         .padding()
         .sheetFrame(minWidth: 680)
+        .bottomBar { actions }
         .onAppear {
             guard !didAutoLoad else { return }
             didAutoLoad = true
@@ -366,39 +367,45 @@ struct AppsView: View {
                 .menuStyle(.borderlessButton)
                 .fixedSize()
                 .help("Filter by state, and take this text to the chain index with a field and sort of your choosing")
-
-                Button {
-                    Task { await reload() }
-                } label: {
-                    if loading {
-                        ProgressView().controlSize(.small)
-                    } else {
-                        Label("Refresh", systemImage: "arrow.clockwise")
-                    }
-                }
-                .disabled(loading)
-                .help("Reload from the chain — with text in the search box, search the whole index for it")
             }
-
-            if tab == .mine && session.canSign {
-                Button(selecting ? "Done" : "Select") {
-                    selecting.toggle()
-                    if !selecting { selection = [] }
-                }
-                .help("Tick several records and stop, recover or close them in one carve — one miner fee for the batch")
-            }
-
-            Button {
-                composing = .new
-            } label: {
-                Label("Publish", systemImage: "plus")
-            }
-            .buttonStyle(.borderedProminent)
-            .disabled(!session.canSign)
-            .help(session.canSign
-                  ? "Register an app you publish"
-                  : "Watch-only identity — no key to sign a carve with")
         }
+    }
+
+    /// The bottom bar, primary last — and Back after it.
+    @ViewBuilder
+    private var actions: some View {
+        if tab.isChainQuery {
+            Button {
+                Task { await reload() }
+            } label: {
+                if loading {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Label("Refresh", systemImage: "arrow.clockwise")
+                }
+            }
+            .disabled(loading)
+            .help("Reload from the chain — with text in the search box, search the whole index for it")
+        }
+
+        if tab == .mine && session.canSign {
+            Button(selecting ? "Done" : "Select") {
+                selecting.toggle()
+                if !selecting { selection = [] }
+            }
+            .help("Tick several records and stop, recover or close them in one carve — one miner fee for the batch")
+        }
+
+        Button {
+            composing = .new
+        } label: {
+            Label("Publish", systemImage: "plus")
+                .labelStyle(.titleAndIcon)
+        }
+        .disabled(!session.canSign)
+        .help(session.canSign
+              ? "Register an app you publish"
+              : "Watch-only identity — no key to sign a carve with")
     }
 
     private var chainSearchChip: some View {

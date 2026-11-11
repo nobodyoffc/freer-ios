@@ -146,6 +146,25 @@ struct FidPickerSheet: View {
             footer
         }
         .sheetFrame(minWidth: 560, minHeight: 520)
+        .bottomBar(back: { onCancel() }) {
+            if model.mode == .many {
+                Button {
+                    Task { onPicked(await model.confirm()) }
+                } label: {
+                    if model.enriching {
+                        HStack(spacing: 6) {
+                            ProgressView().controlSize(.small)
+                            Text("Adding…")
+                        }
+                        .frame(minWidth: 80)
+                    } else {
+                        Text(request.confirmTitle).frame(minWidth: 80)
+                    }
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(!model.canConfirm)
+            }
+        }
         .onChange(of: model.selected) { _, selection in
             // One-shot mode: the click *is* the confirmation. Waiting
             // for a button here would make the simple case — pick the
@@ -191,26 +210,6 @@ struct FidPickerSheet: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
-            Button("Cancel", role: .cancel) { onCancel() }
-                .keyboardShortcut(.cancelAction)
-            if model.mode == .many {
-                Button {
-                    Task { onPicked(await model.confirm()) }
-                } label: {
-                    if model.enriching {
-                        HStack(spacing: 6) {
-                            ProgressView().controlSize(.small)
-                            Text("Adding…")
-                        }
-                        .frame(minWidth: 80)
-                    } else {
-                        Text(request.confirmTitle).frame(minWidth: 80)
-                    }
-                }
-                .keyboardShortcut(.defaultAction)
-                .buttonStyle(.borderedProminent)
-                .disabled(!model.canConfirm)
-            }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)

@@ -121,6 +121,7 @@ struct PublishTextView: View {
         }
         .padding()
         .sheetFrame(minWidth: 640)
+        .bottomBar { actions }
         .onAppear {
             guard !didAutoLoad else { return }
             didAutoLoad = true
@@ -240,38 +241,44 @@ struct PublishTextView: View {
                 .menuStyle(.borderlessButton)
                 .fixedSize()
                 .help("Take this text to the chain index, with a field and sort of your choosing")
-
-                Button {
-                    Task { await refresh() }
-                } label: {
-                    if loading {
-                        ProgressView().controlSize(.small)
-                    } else {
-                        Label("Refresh", systemImage: "arrow.clockwise")
-                    }
-                }
-                .disabled(loading)
             }
-
-            if tab.isMine && session.canSign {
-                Button(selecting ? "Done" : "Select") {
-                    selecting.toggle()
-                    if !selecting { selection = [] }
-                }
-                .help("Tick several and delete or recover them in one carve — one miner fee for the batch")
-            }
-
-            Button {
-                showComposer = true
-            } label: {
-                Label("Publish", systemImage: "doc.badge.plus")
-            }
-            .buttonStyle(.borderedProminent)
-            .disabled(!session.canSign)
-            .help(session.canSign
-                  ? "Publish a text from a file — text, Markdown, Word, RTF, OpenDocument or PDF"
-                  : "Watch-only identity — no key to sign a carve with")
         }
+    }
+
+    /// The bottom bar, primary last — and Back after it.
+    @ViewBuilder
+    private var actions: some View {
+        if tab != .drafts {
+            Button {
+                Task { await refresh() }
+            } label: {
+                if loading {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Label("Refresh", systemImage: "arrow.clockwise")
+                }
+            }
+            .disabled(loading)
+        }
+
+        if tab.isMine && session.canSign {
+            Button(selecting ? "Done" : "Select") {
+                selecting.toggle()
+                if !selecting { selection = [] }
+            }
+            .help("Tick several and delete or recover them in one carve — one miner fee for the batch")
+        }
+
+        Button {
+            showComposer = true
+        } label: {
+            Label("Publish", systemImage: "doc.badge.plus")
+                .labelStyle(.titleAndIcon)
+        }
+        .disabled(!session.canSign)
+        .help(session.canSign
+              ? "Publish a text from a file — text, Markdown, Word, RTF, OpenDocument or PDF"
+              : "Watch-only identity — no key to sign a carve with")
     }
 
     private var chainSearchChip: some View {

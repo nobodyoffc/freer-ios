@@ -75,25 +75,6 @@ struct ContactsView: View {
                 }
                 Spacer()
                 SearchField(String(localized: "Search name, FID, title…"), text: $search)
-                Button {
-                    Task { await syncFromChain() }
-                } label: {
-                    if syncing {
-                        ProgressView().controlSize(.small)
-                    } else {
-                        Label("Refresh", systemImage: "arrow.clockwise")
-                    }
-                }
-                .disabled(syncing || !session.canSign)
-                .help(session.canSign
-                      ? "Pull your carved contacts from the chain"
-                      : "Watch-only identity — cannot decrypt on-chain contacts")
-                Button {
-                    editorMode = .create
-                } label: {
-                    Label("Add", systemImage: "plus")
-                }
-                .buttonStyle(.borderedProminent)
             }
 
             if let err = syncError {
@@ -128,6 +109,7 @@ struct ContactsView: View {
         }
         .padding()
         .sheetFrame(minWidth: 520)
+        .bottomBar { actions }
         .onAppear {
             reload()
             // First visit per pane instance: pull carved contacts from
@@ -399,6 +381,30 @@ struct ContactsView: View {
                 .foregroundStyle(.orange)
             CopyableText(String(localized: "Chain sync failed: \(err)"), font: .caption)
                 .foregroundStyle(.orange)
+        }
+    }
+
+    /// The bottom bar, primary last — and Back after it.
+    @ViewBuilder
+    private var actions: some View {
+        Button {
+            Task { await syncFromChain() }
+        } label: {
+            if syncing {
+                ProgressView().controlSize(.small)
+            } else {
+                Label("Refresh", systemImage: "arrow.clockwise")
+            }
+        }
+        .disabled(syncing || !session.canSign)
+        .help(session.canSign
+              ? "Pull your carved contacts from the chain"
+              : "Watch-only identity — cannot decrypt on-chain contacts")
+
+        Button {
+            editorMode = .create
+        } label: {
+            Label("Add", systemImage: "plus")
         }
     }
 

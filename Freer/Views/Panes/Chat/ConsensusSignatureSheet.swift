@@ -61,7 +61,6 @@ struct ConsensusSignatureSheet: View {
             HStack {
                 Text("Teams awaiting your agreement").font(.title3.bold())
                 Spacer()
-                Button("Done", action: onClose).keyboardShortcut(.defaultAction)
             }
 
             Text("The chain lists you as not having agreed to these teams' current consensus documents. Nothing was sent to tell you — this is read from the teams themselves, so it is true whichever device you are on, and it goes away on its own once your agreement is carved.")
@@ -94,6 +93,7 @@ struct ConsensusSignatureSheet: View {
         }
         .padding(20)
         .sheetFrame(width: 640, height: 480)
+        .bottomBar(back: onClose)
         .onAppear(perform: load)
         .sheet(item: $document) { request in
             ConsensusDocumentSheet(

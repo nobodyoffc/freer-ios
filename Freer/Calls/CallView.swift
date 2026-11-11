@@ -129,18 +129,16 @@ struct CallSettingsSheet: View {
             Toggle("Always relay", isOn: $alwaysRelay)
             Text("Never connect directly to the other side of a call, so they never learn this device's IP address. Calls with contacts otherwise try a direct path, which is faster and costs no relay fee.")
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            HStack {
-                Spacer()
-                Button("Cancel") { dismiss() }
-                Button("Save") {
-                    if CallCenter.testRelayAllowed { calls.testRelay = relay }
-                    calls.alwaysRelay = alwaysRelay
-                    dismiss()
-                }.keyboardShortcut(.defaultAction)
-            }
         }
         .padding(20)
         .sheetFrame(width: 420)
+        .bottomBar(back: { dismiss() }) {
+            Button("Save") {
+                if CallCenter.testRelayAllowed { calls.testRelay = relay }
+                calls.alwaysRelay = alwaysRelay
+                dismiss()
+            }.keyboardShortcut(.defaultAction)
+        }
         .onAppear {
             relay = calls.testRelay
             alwaysRelay = calls.alwaysRelay

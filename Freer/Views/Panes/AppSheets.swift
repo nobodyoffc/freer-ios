@@ -368,28 +368,28 @@ struct PublishAppSheet: View {
                     carve: { review.decide(.carve(reviewed(review.original))) }
                 )
             } else {
-            HStack {
-                Button("Cancel") { onDone(.cancelled) }
-                Spacer()
-                if busy { ProgressView().controlSize(.small) }
-                if !target.isUpdate {
-                    // An on-chain record has no draft to fall back to:
-                    // saving a "draft" of something already published
-                    // would make a second row claiming to be the same
-                    // record.
-                    Button(target.app == nil ? "Save draft" : "Save changes") { saveDraft() }
-                        .disabled(busy || trimmedName.isEmpty)
-                }
-                Button(target.isUpdate ? "Update on chain" : "Publish on chain") {
-                    Task { await carve() }
-                }
-                .keyboardShortcut(.defaultAction)
-                .disabled(!canCarve)
-            }
             }
         }
         .padding(20)
         .sheetFrame(width: 640)
+        .bottomBar(back: { onDone(.cancelled) }) {
+            if busy { ProgressView().controlSize(.small) }
+
+            if !target.isUpdate {
+                // An on-chain record has no draft to fall back to:
+                // saving a "draft" of something already published
+                // would make a second row claiming to be the same
+                // record.
+                Button(target.app == nil ? "Save draft" : "Save changes") { saveDraft() }
+                    .disabled(busy || trimmedName.isEmpty)
+            }
+
+            Button(target.isUpdate ? "Update on chain" : "Publish on chain") {
+                Task { await carve() }
+            }
+            .keyboardShortcut(.defaultAction)
+            .disabled(!canCarve)
+        }
         .frame(minHeight: 500, maxHeight: 780)
         .sheet(item: $pick) { request in
             FidPickerSheet(session: session, request: request) { picked in
@@ -835,22 +835,18 @@ struct AppDetailSheet: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
-
-            HStack {
-                Button {
-                    rating = true
-                } label: {
-                    Label("Rate", systemImage: "star")
-                }
-                .disabled(!canRate)
-                .help(rateHelp)
-                Spacer()
-                Button("Done", action: onClose)
-                    .keyboardShortcut(.defaultAction)
-            }
         }
         .padding(20)
         .sheetFrame(width: 560)
+        .bottomBar(back: onClose) {
+            Button {
+                rating = true
+            } label: {
+                Label("Rate", systemImage: "star")
+            }
+            .disabled(!canRate)
+            .help(rateHelp)
+        }
         // This sheet draws FIDs of its own, and a sheet cannot present
         // another sheet through the window's host — so it installs one.
         // See ``View/fidDetailsHost(session:)``.
@@ -1031,18 +1027,15 @@ struct CloseAppSheet: View {
             if let error {
                 CopyableText(error, font: .caption).foregroundStyle(.red)
             }
-
-            HStack {
-                Button("Cancel") { onDone(nil) }
-                Spacer()
-                if busy { ProgressView().controlSize(.small) }
-                Button("Close permanently", role: .destructive) { Task { await close() } }
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(busy || apps.isEmpty || !session.canSign)
-            }
         }
         .padding(20)
         .sheetFrame(width: 500)
+        .bottomBar(back: { onDone(nil) }) {
+            if busy { ProgressView().controlSize(.small) }
+            Button("Close permanently", role: .destructive) { Task { await close() } }
+                .keyboardShortcut(.defaultAction)
+                .disabled(busy || apps.isEmpty || !session.canSign)
+        }
     }
 
     private func close() async {

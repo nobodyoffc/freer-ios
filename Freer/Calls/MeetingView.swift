@@ -345,19 +345,17 @@ struct MemberPickerSheet: View {
                     }
                 }
             }
-            HStack {
-                Spacer()
-                Button("Cancel") { dismiss() }
-                Button(confirm) {
-                    onPick(members.filter(chosen.contains))
-                    dismiss()
-                }
-                .keyboardShortcut(.defaultAction)
-                .disabled(chosen.isEmpty)
-            }
         }
         .padding(20)
         .sheetFrame(width: 380)
+        .bottomBar(back: { dismiss() }) {
+            Button(confirm) {
+                onPick(members.filter(chosen.contains))
+                dismiss()
+            }
+            .keyboardShortcut(.defaultAction)
+            .disabled(chosen.isEmpty)
+        }
         .onAppear {
             // Their CIDs are on the way before anybody types one.
             names.resolve(members)

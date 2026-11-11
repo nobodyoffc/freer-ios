@@ -95,18 +95,14 @@ struct RoomSettingsSheet: View {
             if let error {
                 CopyableText(error, font: .caption).foregroundStyle(.red)
             }
-
-            HStack {
-                Spacer()
-                Button("Cancel", role: .cancel) { onClose() }
-                Button(working ? "Saving…" : "Save and tell everyone") { save() }
-                    .buttonStyle(.borderedProminent)
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(working || name.trimmingCharacters(in: .whitespaces).isEmpty)
-            }
         }
         .padding(20)
         .sheetFrame(width: 460)
+        .bottomBar(back: { onClose() }) {
+            Button(working ? "Saving…" : "Save and tell everyone") { save() }
+                .keyboardShortcut(.defaultAction)
+                .disabled(working || name.trimmingCharacters(in: .whitespaces).isEmpty)
+        }
         .onAppear(perform: load)
         .sheet(isPresented: $pickingDock) {
             ServicePickerSheet(

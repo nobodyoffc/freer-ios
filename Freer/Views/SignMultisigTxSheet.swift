@@ -95,10 +95,29 @@ struct SignMultisigTxSheet: View {
                 }
                 .padding(16)
             }
-            Divider()
-            footer
         }
         .sheetFrame(minWidth: 620, minHeight: 620)
+        .bottomBar(back: { onCancel() }) {
+            if weCanSign {
+                Button("Sign as me") { sign() }
+                    .disabled(busy)
+            }
+            if let status, status.isComplete {
+                Button {
+                    Task { await broadcast() }
+                } label: {
+                    if busy {
+                        HStack(spacing: 6) {
+                            ProgressView().controlSize(.small)
+                            Text("Broadcasting…")
+                        }
+                    } else {
+                        Text("Broadcast")
+                    }
+                }
+                .disabled(busy)
+            }
+        }
         .sheet(item: $pick) { request in
             FidPickerSheet(session: session, request: request) { picked in
                 pick = nil
@@ -332,36 +351,6 @@ struct SignMultisigTxSheet: View {
                 }
             }
         }
-    }
-
-    private var footer: some View {
-        HStack {
-            Spacer()
-            Button("Close", role: .cancel) { onCancel() }
-                .keyboardShortcut(.cancelAction)
-            if weCanSign {
-                Button("Sign as me") { sign() }
-                    .disabled(busy)
-            }
-            if let status, status.isComplete {
-                Button {
-                    Task { await broadcast() }
-                } label: {
-                    if busy {
-                        HStack(spacing: 6) {
-                            ProgressView().controlSize(.small)
-                            Text("Broadcasting…")
-                        }
-                    } else {
-                        Text("Broadcast")
-                    }
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(busy)
-            }
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
     }
 
     // MARK: - actions

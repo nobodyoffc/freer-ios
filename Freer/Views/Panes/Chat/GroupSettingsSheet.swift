@@ -224,18 +224,14 @@ struct GroupSettingsSheet: View {
                 CopyableText(error, font: .caption).foregroundStyle(.red)
                     .fixedSize(horizontal: false, vertical: true)
             }
-
-            HStack {
-                Spacer()
-                Button("Cancel", role: .cancel) { onClose() }
-                Button(working ? "Carving…" : "Save on-chain") { attemptSave() }
-                    .buttonStyle(.borderedProminent)
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(!canSave)
-            }
         }
         .padding(20)
         .sheetFrame(width: 520)
+        .bottomBar(back: { onClose() }) {
+            Button(working ? "Carving…" : "Save on-chain") { attemptSave() }
+                .keyboardShortcut(.defaultAction)
+                .disabled(!canSave)
+        }
         .onAppear(perform: load)
         .sheet(isPresented: $pickingDock) {
             ServicePickerSheet(

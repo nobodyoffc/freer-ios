@@ -33,18 +33,8 @@ struct QrToolSheet: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             .padding(16)
-
-            Divider()
-
-            HStack {
-                Spacer()
-                Button("Done") { onDone() }
-                    .keyboardShortcut(.defaultAction)
-                    .buttonStyle(.borderedProminent)
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
         }
         .sheetFrame(minWidth: 560)
+        .bottomBar(back: { onDone() })
     }
 }

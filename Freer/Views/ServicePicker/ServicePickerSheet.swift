@@ -77,6 +77,7 @@ struct ServicePickerSheet: View {
             footer
         }
         .sheetFrame(minWidth: 560, minHeight: 480)
+        .bottomBar(back: { onCancel() })
         .onAppear {
             query = initialQuery
             // Open on the list rather than on an empty box: "which
@@ -195,8 +196,6 @@ struct ServicePickerSheet: View {
                 Text("\(results.count) shown").font(.caption).foregroundStyle(.secondary)
             }
             Spacer()
-            Button("Cancel", role: .cancel) { onCancel() }
-                .keyboardShortcut(.cancelAction)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)

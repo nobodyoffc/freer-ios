@@ -75,17 +75,16 @@ struct CashPickerSheet: View {
                     .font(.callout.monospacedDigit())
                     .foregroundStyle(.secondary)
                 Spacer()
-                Button("Cancel", role: .cancel) { onCancel() }
-                    .keyboardShortcut(.cancelAction)
-                Button("Add") { onDone(chosen) }
-                    .keyboardShortcut(.defaultAction)
-                    .buttonStyle(.borderedProminent)
-                    .disabled(chosen.isEmpty)
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
         }
         .sheetFrame(minWidth: 560, minHeight: 400)
+        .bottomBar(back: { onCancel() }) {
+            Button("Add") { onDone(chosen) }
+                .keyboardShortcut(.defaultAction)
+                .disabled(chosen.isEmpty)
+        }
     }
 
     private func row(_ cash: Cash) -> some View {
@@ -237,22 +236,13 @@ struct ManualInputSheet: View {
                 }
             }
             .formStyle(.grouped)
-
-            Divider()
-
-            HStack {
-                Spacer()
-                Button("Cancel", role: .cancel) { onCancel() }
-                    .keyboardShortcut(.cancelAction)
-                Button("Add") { add() }
-                    .keyboardShortcut(.defaultAction)
-                    .buttonStyle(.borderedProminent)
-                    .disabled(!canAdd)
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
         }
         .sheetFrame(minWidth: 520)
+        .bottomBar(back: { onCancel() }) {
+            Button("Add") { add() }
+                .keyboardShortcut(.defaultAction)
+                .disabled(!canAdd)
+        }
     }
 
     private func add() {
@@ -359,24 +349,15 @@ struct BatchOutputSheet: View {
                 .frame(maxHeight: 140)
             }
             .padding(16)
-
-            Divider()
-
-            HStack {
-                Spacer()
-                Button("Cancel", role: .cancel) { onCancel() }
-                    .keyboardShortcut(.cancelAction)
-                Button("Add outputs") {
-                    if let sats = amountSats { onDone(sats) }
-                }
-                .keyboardShortcut(.defaultAction)
-                .buttonStyle(.borderedProminent)
-                .disabled(amountSats == nil)
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
         }
         .sheetFrame(minWidth: 460)
+        .bottomBar(back: { onCancel() }) {
+            Button("Add outputs") {
+                if let sats = amountSats { onDone(sats) }
+            }
+            .keyboardShortcut(.defaultAction)
+            .disabled(amountSats == nil)
+        }
     }
 }
 
@@ -433,22 +414,13 @@ struct ImportTxSheet: View {
                 .buttonStyle(.borderless)
             }
             .padding(16)
-
-            Divider()
-
-            HStack {
-                Spacer()
-                Button("Cancel", role: .cancel) { onCancel() }
-                    .keyboardShortcut(.cancelAction)
-                Button("Import") { onDone(text) }
-                    .keyboardShortcut(.defaultAction)
-                    .buttonStyle(.borderedProminent)
-                    .disabled(text.trimmed.isEmpty)
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
         }
         .sheetFrame(minWidth: 540)
+        .bottomBar(back: { onCancel() }) {
+            Button("Import") { onDone(text) }
+                .keyboardShortcut(.defaultAction)
+                .disabled(text.trimmed.isEmpty)
+        }
     }
 }
 

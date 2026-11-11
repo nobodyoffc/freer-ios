@@ -108,10 +108,41 @@ struct CashReorgSheet: View {
                 }
                 .padding(16)
             }
-            Divider()
-            buttons
         }
         .sheetFrame(minWidth: 540, minHeight: 480)
+        .bottomBar(back: { onDone(.cancelled) }) {
+            if session.canSign {
+                Button {
+                    actionError = nil
+                    // See SendPaymentView: when the global confirmation is
+                    // on it shows the real transaction a moment from
+                    // now, so this one would only be noise.
+                    if session.confirmBeforeSigning {
+                        Task { await run() }
+                    } else {
+                        showConfirm = true
+                    }
+                } label: {
+                    if working {
+                        HStack(spacing: 6) {
+                            ProgressView().controlSize(.small)
+                            Text("Working…")
+                        }.frame(width: 150)
+                    } else {
+                        Text("Reorganize").frame(width: 150)
+                    }
+                }
+                .disabled(plan == nil || working)
+            } else {
+                Button {
+                    buildUnsigned()
+                } label: {
+                    Text("Build unsigned tx").frame(width: 160)
+                }
+                .disabled(plan == nil)
+                .help("Watch-only identity — build the transaction here and sign it where the key lives.")
+            }
+        }
         .sheet(isPresented: $showUnsigned) {
             if let unsigned {
                 UnsignedTxSheet(
@@ -281,49 +312,6 @@ struct CashReorgSheet: View {
         return lines
     }
 
-    private var buttons: some View {
-        HStack(spacing: 8) {
-            Button("Cancel") { onDone(.cancelled) }
-                .keyboardShortcut(.cancelAction)
-            Spacer()
-            if session.canSign {
-                Button {
-                    actionError = nil
-                    // See SendPaymentView: when the global confirmation is
-                    // on it shows the real transaction a moment from
-                    // now, so this one would only be noise.
-                    if session.confirmBeforeSigning {
-                        Task { await run() }
-                    } else {
-                        showConfirm = true
-                    }
-                } label: {
-                    if working {
-                        HStack(spacing: 6) {
-                            ProgressView().controlSize(.small)
-                            Text("Working…")
-                        }.frame(width: 150)
-                    } else {
-                        Text("Reorganize").frame(width: 150)
-                    }
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(plan == nil || working)
-            } else {
-                Button {
-                    buildUnsigned()
-                } label: {
-                    Text("Build unsigned tx").frame(width: 160)
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(plan == nil)
-                .help("Watch-only identity — build the transaction here and sign it where the key lives.")
-            }
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
-    }
-
     // MARK: - run
 
     @MainActor
@@ -476,10 +464,38 @@ struct CashSendSheet: View {
                 }
                 .padding(16)
             }
-            Divider()
-            buttons
         }
         .sheetFrame(minWidth: 560, minHeight: 480)
+        .bottomBar(back: { onDone(.cancelled) }) {
+            if session.canSign {
+                Button {
+                    actionError = nil
+                    if session.confirmBeforeSigning {
+                        Task { await run() }
+                    } else {
+                        showConfirm = true
+                    }
+                } label: {
+                    if working {
+                        HStack(spacing: 6) {
+                            ProgressView().controlSize(.small)
+                            Text("Sending…")
+                        }.frame(width: 140)
+                    } else {
+                        Text("Send").frame(width: 140)
+                    }
+                }
+                .disabled(!canSubmit)
+            } else {
+                Button {
+                    buildUnsigned()
+                } label: {
+                    Text("Build unsigned tx").frame(width: 160)
+                }
+                .disabled(!canSubmit)
+                .help("Watch-only identity — build the transaction here and sign it where the key lives.")
+            }
+        }
         .sheet(isPresented: $showScan) {
             QrScanSheet(title: String(localized: "Scan recipient FID")) { scanned in
                 recipient = scanned
@@ -617,46 +633,6 @@ struct CashSendSheet: View {
         case nil:
             EmptyView()
         }
-    }
-
-    private var buttons: some View {
-        HStack(spacing: 8) {
-            Button("Cancel") { onDone(.cancelled) }
-                .keyboardShortcut(.cancelAction)
-            Spacer()
-            if session.canSign {
-                Button {
-                    actionError = nil
-                    if session.confirmBeforeSigning {
-                        Task { await run() }
-                    } else {
-                        showConfirm = true
-                    }
-                } label: {
-                    if working {
-                        HStack(spacing: 6) {
-                            ProgressView().controlSize(.small)
-                            Text("Sending…")
-                        }.frame(width: 140)
-                    } else {
-                        Text("Send").frame(width: 140)
-                    }
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(!canSubmit)
-            } else {
-                Button {
-                    buildUnsigned()
-                } label: {
-                    Text("Build unsigned tx").frame(width: 160)
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(!canSubmit)
-                .help("Watch-only identity — build the transaction here and sign it where the key lives.")
-            }
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
     }
 
     /// Everything, less the fee for a one-output transaction. Uses

@@ -102,6 +102,21 @@ struct HomeView: View {
                     .environment(\.paneIdentityHidden, true)
                     .navigationTitle(pane.title)
                     .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        // The title at the left end, as Android's toolbar
+                        // has it; the centre, where iOS would put it, is
+                        // left empty.
+                        ToolbarItem(placement: .topBarLeading) {
+                            Text(pane.title)
+                                .font(.title3.weight(.semibold))
+                                .lineLimit(1)
+                                .accessibilityAddTraits(.isHeader)
+                        }
+                        ToolbarItem(placement: .principal) { Text("") }
+                        ToolbarItem(placement: .topBarTrailing) {
+                            LiveIdentityChip(session: session) { path = [] }
+                        }
+                    }
             }
         }
         .safeAreaInset(edge: .bottom) { identityNoteBanner }

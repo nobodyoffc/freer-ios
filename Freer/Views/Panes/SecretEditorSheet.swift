@@ -79,31 +79,24 @@ struct SecretEditorSheet: View {
                 CopyableText(error, font: .caption)
                     .foregroundStyle(.red)
             }
-
-            HStack {
-                Button("Cancel", role: .cancel, action: onCancel)
-                    .keyboardShortcut(.cancelAction)
-                Spacer()
-                // A carved secret mirrors the chain: a local-only edit would
-                // be replaced by the chain copy at the next sync.
-                if !isCarved {
-                    Button("Save locally") {
-                        Task { await save(carve: false) }
-                    }
-                    .disabled(content.isEmpty || working)
-                }
-                Button(isCarved ? "Save & carve update" : "Save & carve on-chain") {
-                    Task { await save(carve: true) }
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(content.isEmpty || working || isPendingCarve)
-                .help(isPendingCarve
-                      ? "Wait for the earlier carve to confirm before carving an update"
-                      : "Encrypted to your key and written to the FCH chain (small miner fee); syncs to any device you unlock with this key")
-            }
         }
         .padding(20)
         .sheetFrame(minWidth: 480)
+        .bottomBar(back: onCancel) {
+            if !isCarved {
+                Button("Save locally") {
+                    Task { await save(carve: false) }
+                }
+                .disabled(content.isEmpty || working)
+            }
+            Button(isCarved ? "Save & carve update" : "Save & carve on-chain") {
+                Task { await save(carve: true) }
+            }
+            .disabled(content.isEmpty || working || isPendingCarve)
+            .help(isPendingCarve
+                  ? "Wait for the earlier carve to confirm before carving an update"
+                  : "Encrypted to your key and written to the FCH chain (small miner fee); syncs to any device you unlock with this key")
+        }
         .onAppear {
             if let editing {
                 load(editing)

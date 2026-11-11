@@ -126,7 +126,6 @@ struct MemberListSheet: View {
                           ? "Nobody but the owner is a manager"
                           : "Take the manager role from several members in one carve")
                 }
-                Button("Done", action: onClose).keyboardShortcut(.defaultAction)
             }
 
             Text(membershipNote)
@@ -173,6 +172,7 @@ struct MemberListSheet: View {
         }
         .padding(20)
         .sheetFrame(width: 580, height: style.mode == .team ? 560 : 460)
+        .bottomBar(back: onClose)
         // Every row is a FID, and a sheet cannot present another sheet
         // through the window's host — so this one installs its own.
         .fidDetailsHost(session: session)

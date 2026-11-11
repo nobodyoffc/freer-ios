@@ -132,35 +132,29 @@ struct AddMainView: View {
             }
 
             Section {
-                HStack {
-                    Button("Back") {
-                        appState.route = .chooseMain
-                    }
-                    .disabled(working)
-
-                    Spacer()
-
-                    Button {
-                        Task { await submit() }
-                    } label: {
-                        if working {
-                            HStack(spacing: 6) {
-                                ProgressView().controlSize(.small)
-                                Text("Adding…")
-                            }
-                            .frame(width: 140)
-                        } else {
-                            Text("Add identity").frame(width: 140)
-                        }
-                    }
-                    .keyboardShortcut(.defaultAction)
-                    .buttonStyle(.borderedProminent)
-                    .disabled(working || !inputLooksValid)
-                }
             }
         }
         .formStyle(.grouped)
         .sheetFrame(minWidth: 540, maxWidth: 620)
+        .bottomBar(back: {
+            appState.route = .chooseMain
+        }) {
+            Button {
+                Task { await submit() }
+            } label: {
+                if working {
+                    HStack(spacing: 6) {
+                        ProgressView().controlSize(.small)
+                        Text("Adding…")
+                    }
+                    .frame(width: 140)
+                } else {
+                    Text("Add identity").frame(width: 140)
+                }
+            }
+            .keyboardShortcut(.defaultAction)
+            .disabled(working || !inputLooksValid)
+        }
         .padding()
         .onAppear { if candidates.isEmpty { regenerate() } }
         .sheet(isPresented: $showScan) {

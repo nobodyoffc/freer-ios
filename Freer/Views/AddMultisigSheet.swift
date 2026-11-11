@@ -84,6 +84,11 @@ struct AddMultisigSheet: View {
             footer
         }
         .sheetFrame(minWidth: 580, minHeight: 500)
+        .bottomBar(back: { onCancel() }) {
+            Button(addButtonTitle) { add() }
+                .keyboardShortcut(.defaultAction)
+                .disabled(tab == .found ? selected.isEmpty : parsed == nil)
+        }
         .task {
             guard !loaded else { return }
             await load()
@@ -137,12 +142,6 @@ struct AddMultisigSheet: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer()
-            Button("Cancel", role: .cancel) { onCancel() }
-                .keyboardShortcut(.cancelAction)
-            Button(addButtonTitle) { add() }
-                .keyboardShortcut(.defaultAction)
-                .buttonStyle(.borderedProminent)
-                .disabled(tab == .found ? selected.isEmpty : parsed == nil)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)

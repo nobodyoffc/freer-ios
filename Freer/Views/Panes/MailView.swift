@@ -114,6 +114,7 @@ struct MailView: View {
         }
         .padding()
         .sheetFrame(minWidth: 560)
+        .bottomBar { actions }
         .onAppear {
             reload()
             if !didAutoSync {
@@ -214,35 +215,38 @@ struct MailView: View {
 
             SearchField(String(localized: "Search sender, body, id…"), text: $search, minWidth: 140)
                 .help("Matches the correspondents, their names, the id, and the body of any Cmail that has been decrypted")
-
-            if unreadCount > 0 {
-                Button("Mark all read") { markAllRead() }
-                    .help("Clears the unread count without opening each Cmail")
-            }
-
-            Button {
-                Task { await syncFromChain() }
-            } label: {
-                if syncing {
-                    ProgressView().controlSize(.small)
-                } else {
-                    Label("Refresh", systemImage: "arrow.clockwise")
-                }
-            }
-            .disabled(syncing)
-            .help("Pull Cmail sent to or from this FID")
-
-            Button {
-                compose = ComposeRequest(preset: nil)
-            } label: {
-                Label("Write", systemImage: "square.and.pencil")
-            }
-            .buttonStyle(.borderedProminent)
-            .disabled(!session.canSign)
-            .help(session.canSign
-                  ? "Write a new Cmail"
-                  : "Watch-only identity — no key to sign or encrypt a Cmail with")
         }
+    }
+
+    /// The bottom bar, primary last — and Back after it.
+    @ViewBuilder
+    private var actions: some View {
+        if unreadCount > 0 {
+            Button("Mark all read") { markAllRead() }
+                .help("Clears the unread count without opening each Cmail")
+        }
+
+        Button {
+            Task { await syncFromChain() }
+        } label: {
+            if syncing {
+                ProgressView().controlSize(.small)
+            } else {
+                Label("Refresh", systemImage: "arrow.clockwise")
+            }
+        }
+        .disabled(syncing)
+        .help("Pull Cmail sent to or from this FID")
+
+        Button {
+            compose = ComposeRequest(preset: nil)
+        } label: {
+            Label("Write", systemImage: "square.and.pencil")
+        }
+        .disabled(!session.canSign)
+        .help(session.canSign
+              ? "Write a new Cmail"
+              : "Watch-only identity — no key to sign or encrypt a Cmail with")
     }
 
     @ViewBuilder

@@ -61,6 +61,7 @@ struct ConvertView: View {
         }
         .padding()
         .sheetFrame(minWidth: 480)
+        .bottomBar()
     }
 }
 

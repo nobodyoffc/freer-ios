@@ -87,6 +87,7 @@ struct SettingsView: View {
         }
         .padding()
         .sheetFrame(minWidth: 480)
+        .bottomBar()
         .onAppear {
             load()
             Task { await loadNoticeFee() }

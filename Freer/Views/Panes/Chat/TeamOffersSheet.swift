@@ -65,18 +65,6 @@ struct TeamOffersSheet: View {
             HStack {
                 Text("Team invitations").font(.title3.bold())
                 Spacer()
-                Button {
-                    Task { await refresh() }
-                } label: {
-                    if refreshing {
-                        ProgressView().controlSize(.small)
-                    } else {
-                        Label("Check the chain", systemImage: "arrow.clockwise")
-                    }
-                }
-                .disabled(refreshing)
-                .help("Ask the chain which teams list this FID as invited, or as the one they are being handed to")
-                Button("Done", action: onClose).keyboardShortcut(.defaultAction)
             }
 
             Text("An invitation is a chain record: a team's managers carve it, and only an invitee can join. A notice somebody sends only tells you to look — it is marked unconfirmed until the chain lists it, and nothing can be carved on its strength.")
@@ -125,6 +113,19 @@ struct TeamOffersSheet: View {
         }
         .padding(20)
         .sheetFrame(width: 720, height: 600)
+        .bottomBar(back: onClose) {
+            Button {
+                Task { await refresh() }
+            } label: {
+                if refreshing {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Label("Check the chain", systemImage: "arrow.clockwise")
+                }
+            }
+            .disabled(refreshing)
+            .help("Ask the chain which teams list this FID as invited, or as the one they are being handed to")
+        }
         .fidDetailsHost(session: session)
         .onAppear {
             load()

@@ -241,16 +241,16 @@ struct DeployTokenSheet: View {
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.tertiary)
                 Spacer()
-                Button("Cancel") { onDone(nil) }
-                if busy { ProgressView().controlSize(.small) }
-                Button("Deploy…") { confirming = true }
-                    .keyboardShortcut(.defaultAction)
-                    .buttonStyle(.borderedProminent)
-                    .disabled(validationError != nil || busy || !session.canSign)
             }
         }
         .padding(20)
         .sheetFrame(width: 560)
+        .bottomBar(back: { onDone(nil) }) {
+            if busy { ProgressView().controlSize(.small) }
+            Button("Deploy…") { confirming = true }
+                .keyboardShortcut(.defaultAction)
+                .disabled(validationError != nil || busy || !session.canSign)
+        }
         .alert("Deploy “\(name)” permanently?", isPresented: $confirming) {
             Button("Cancel", role: .cancel) { }
             Button("Deploy") { Task { await deploy() } }
@@ -488,19 +488,15 @@ struct IssueTokenSheet: View {
                 CopyableText(b).font(.caption).foregroundStyle(.orange)
                     .fixedSize(horizontal: false, vertical: true)
             }
-
-            HStack {
-                Button("Cancel") { onDone(nil) }
-                Spacer()
-                if busy { ProgressView().controlSize(.small) }
-                Button("Issue") { Task { await issue() } }
-                    .keyboardShortcut(.defaultAction)
-                    .buttonStyle(.borderedProminent)
-                    .disabled(!canCarve)
-            }
         }
         .padding(20)
         .sheetFrame(width: 620)
+        .bottomBar(back: { onDone(nil) }) {
+            if busy { ProgressView().controlSize(.small) }
+            Button("Issue") { Task { await issue() } }
+                .keyboardShortcut(.defaultAction)
+                .disabled(!canCarve)
+        }
         .sheet(item: $pick) { request in
             FidPickerSheet(session: session, request: request) { picked in
                 if let target = pickingFor, let first = picked.first,
@@ -687,19 +683,15 @@ struct SendTokenSheet: View {
                 CopyableText(v).font(.caption).foregroundStyle(.orange)
                     .fixedSize(horizontal: false, vertical: true)
             }
-
-            HStack {
-                Button("Cancel") { onDone(nil) }
-                Spacer()
-                if busy { ProgressView().controlSize(.small) }
-                Button("Send") { Task { await send() } }
-                    .keyboardShortcut(.defaultAction)
-                    .buttonStyle(.borderedProminent)
-                    .disabled(!canSend)
-            }
         }
         .padding(20)
         .sheetFrame(width: 480)
+        .bottomBar(back: { onDone(nil) }) {
+            if busy { ProgressView().controlSize(.small) }
+            Button("Send") { Task { await send() } }
+                .keyboardShortcut(.defaultAction)
+                .disabled(!canSend)
+        }
         .task { await refreshBalance() }
         .sheet(item: $pick) { request in
             FidPickerSheet(session: session, request: request) { picked in
@@ -819,16 +811,12 @@ struct TokenDetailSheet: View {
             if let error {
                 CopyableText(error, font: .caption).foregroundStyle(.red)
             }
-
-            HStack {
-                if loading { ProgressView().controlSize(.small) }
-                Spacer()
-                Button("Close") { onClose() }
-                    .keyboardShortcut(.cancelAction)
-            }
         }
         .padding(20)
         .sheetFrame(width: 560)
+        .bottomBar(back: { onClose() }) {
+            if loading { ProgressView().controlSize(.small) }
+        }
         .onChange(of: tab) { _, new in Task { await load(new) } }
         // This sheet draws FIDs of its own, and a sheet cannot present
         // another sheet through the window's host — so it installs one.

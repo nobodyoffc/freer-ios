@@ -145,6 +145,7 @@ struct FirstFchBoardView: View {
         }
         .padding()
         .sheetFrame(minWidth: 560)
+        .bottomBar { actions }
         .task { await load() }
         .onChange(of: session.liveFid) { _, _ in
             resetForIdentity()
@@ -167,16 +168,6 @@ struct FirstFchBoardView: View {
 
     private var toolbar: some View {
         FlowRow(spacing: 12) {
-            Button {
-                Task { await refreshBoard() }
-            } label: {
-                if loading {
-                    ProgressView().controlSize(.small)
-                } else {
-                    Label("Refresh", systemImage: "arrow.clockwise")
-                }
-            }
-            .disabled(loading)
 
             Toggle("Check at login", isOn: Binding(
                 get: { boardState.checkAtLogin },
@@ -188,6 +179,21 @@ struct FirstFchBoardView: View {
 
             Spacer()
         }
+    }
+
+    /// The bottom bar, primary last — and Back after it.
+    @ViewBuilder
+    private var actions: some View {
+        Button {
+            Task { await refreshBoard() }
+        } label: {
+            if loading {
+                ProgressView().controlSize(.small)
+            } else {
+                Label("Refresh", systemImage: "arrow.clockwise")
+            }
+        }
+        .disabled(loading)
     }
 
     // MARK: - what this page is for

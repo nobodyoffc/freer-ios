@@ -37,7 +37,6 @@ struct RequestHistorySheet: View {
             HStack {
                 Text("Request history").font(.title3.bold())
                 Spacer()
-                Button("Cancel", role: .cancel, action: onClose)
             }
 
             Text("Whoever you ask sees the request and decides. If they agree, the messages they hold from this \(style.noun) in that range are uploaded encrypted to their DISK, then fetched and added here, marked as imported. Messages already here are left as they are.")
@@ -88,6 +87,7 @@ struct RequestHistorySheet: View {
         }
         .padding(20)
         .sheetFrame(width: 500, height: 520)
+        .bottomBar(back: onClose)
         .onAppear(perform: load)
         .task(id: candidates) { names.resolve(candidates, session: session) }
     }

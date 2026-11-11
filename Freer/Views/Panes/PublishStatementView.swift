@@ -103,6 +103,7 @@ struct PublishStatementView: View {
         }
         .padding()
         .sheetFrame(minWidth: 640)
+        .bottomBar { actions }
         .onAppear {
             guard !didAutoLoad else { return }
             didAutoLoad = true
@@ -196,30 +197,36 @@ struct PublishStatementView: View {
                 }
                 .menuStyle(.borderlessButton)
                 .fixedSize()
-
-                Button {
-                    Task { await refresh() }
-                } label: {
-                    if loading {
-                        ProgressView().controlSize(.small)
-                    } else {
-                        Label("Refresh", systemImage: "arrow.clockwise")
-                    }
-                }
-                .disabled(loading)
             }
-
-            Button {
-                showComposer = true
-            } label: {
-                Label("Declare", systemImage: "text.quote")
-            }
-            .buttonStyle(.borderedProminent)
-            .disabled(!session.canSign)
-            .help(session.canSign
-                  ? "Write a formal statement and carve it"
-                  : "Watch-only identity — no key to sign a carve with")
         }
+    }
+
+    /// The bottom bar, primary last — and Back after it.
+    @ViewBuilder
+    private var actions: some View {
+        if tab != .drafts {
+            Button {
+                Task { await refresh() }
+            } label: {
+                if loading {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Label("Refresh", systemImage: "arrow.clockwise")
+                }
+            }
+            .disabled(loading)
+        }
+
+        Button {
+            showComposer = true
+        } label: {
+            Label("Declare", systemImage: "text.quote")
+                .labelStyle(.titleAndIcon)
+        }
+        .disabled(!session.canSign)
+        .help(session.canSign
+              ? "Write a formal statement and carve it"
+              : "Watch-only identity — no key to sign a carve with")
     }
 
     private var chainSearchChip: some View {

@@ -80,6 +80,19 @@ struct MailComposeSheet: View {
             footer
         }
         .sheetFrame(width: 620, height: 620)
+        .bottomBar(back: { onCancel() }) {
+            Button {
+                showConfirm = true
+            } label: {
+                if sending {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Text("Send")
+                }
+            }
+            .disabled(!canSend)
+            .keyboardShortcut(.defaultAction)
+        }
         .onAppear {
             recipient = preset?.recipient ?? ""
             messageText = preset?.body ?? ""
@@ -260,20 +273,6 @@ struct MailComposeSheet: View {
                     .foregroundStyle(.orange)
             }
             Spacer()
-            Button("Cancel", role: .cancel) { onCancel() }
-                .keyboardShortcut(.cancelAction)
-            Button {
-                showConfirm = true
-            } label: {
-                if sending {
-                    ProgressView().controlSize(.small)
-                } else {
-                    Text("Send")
-                }
-            }
-            .buttonStyle(.borderedProminent)
-            .disabled(!canSend)
-            .keyboardShortcut(.defaultAction)
         }
         .padding(20)
     }

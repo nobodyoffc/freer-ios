@@ -51,6 +51,7 @@ struct SystemMessagesView: View {
                 list
             }
         }
+        .bottomBar { actions }
         .onAppear {
             reload()
             // Live: a failure that happens while this page is open
@@ -82,23 +83,27 @@ struct SystemMessagesView: View {
                 .foregroundStyle(.secondary)
 
             Spacer()
-
-            Button {
-                copyAll()
-            } label: {
-                Label("Copy all", systemImage: "doc.on.doc")
-            }
-            .disabled(filtered.isEmpty)
-            .help("Copy every listed entry, with its detail, as plain text")
-
-            Button {
-                SystemLog.shared.clear()
-                reload()
-            } label: {
-                Label("Clear", systemImage: "trash")
-            }
-            .disabled(messages.isEmpty)
         }
+    }
+
+    /// The bottom bar, primary last — and Back after it.
+    @ViewBuilder
+    private var actions: some View {
+        Button {
+            copyAll()
+        } label: {
+            Label("Copy all", systemImage: "doc.on.doc")
+        }
+        .disabled(filtered.isEmpty)
+        .help("Copy every listed entry, with its detail, as plain text")
+
+        Button {
+            SystemLog.shared.clear()
+            reload()
+        } label: {
+            Label("Clear", systemImage: "trash")
+        }
+        .disabled(messages.isEmpty)
     }
 
     private var countSummary: String {
