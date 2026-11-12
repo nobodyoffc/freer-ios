@@ -76,7 +76,13 @@ private struct BottomBar<Actions: View>: ViewModifier {
             }
             // Measured outside the bar, so it is the screen's own inset
             // and not one the bar added.
-            .onGeometryChange(for: CGFloat.self) { $0.safeAreaInsets.bottom } action: { bottomInset = $0 }
+            //
+            // In whole points. The inset feeds the bar's padding, and the
+            // padding moves the layout the inset is read from: on a phone
+            // it came back as 34 and 33.999999999999886 by turns, each
+            // answer undoing the other, and the pane being pushed never
+            // finished laying out — the app froze on the way in.
+            .onGeometryChange(for: CGFloat.self) { $0.safeAreaInsets.bottom.rounded() } action: { bottomInset = $0 }
             .navigationBarBackButtonHidden(true)
             .background(EdgeSwipeBack())
     }
