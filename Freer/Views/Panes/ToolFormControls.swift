@@ -55,35 +55,22 @@ struct ToolResultRow: View {
     let label: String
     let value: String
 
-    @State private var showQr = false
-
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 6) {
                 Text(label)
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                Button {
-                    showQr = true
-                } label: {
-                    Image(systemName: "qrcode")
-                        .font(.caption)
-                }
-                .buttonStyle(.borderless)
-                .foregroundStyle(.secondary)
-                .help("Show “\(label)” as a QR code")
                 Spacer(minLength: 0)
+                // A tap on the value copies it too, but nothing on a
+                // phone says so: no pointer, no hover.
+                ToolValueActions(label: label, value: value)
             }
             CopyableText(value, font: .system(.body, design: .monospaced))
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .sheet(isPresented: $showQr) {
-            // QrDisplaySheet chunks anything past one code's capacity,
-            // so a pretty-printed JSON blob paginates instead of failing.
-            QrDisplaySheet(title: label, content: value) { showQr = false }
-        }
     }
 }
 
@@ -106,10 +93,9 @@ struct ToolResultTable: View {
     }
 }
 
-/// Copy and QR buttons for a value that lives in an *editable* field,
-/// where the click-to-copy used everywhere else cannot apply — clicking
-/// an editable field has to place the caret. Used by the Time
-/// converter, whose five fields are all inputs and all outputs.
+/// Copy and QR buttons for one value: beside every result, and beside
+/// the Time converter's fields, which are all inputs and all outputs and
+/// so cannot copy on a tap — a tap there places the caret.
 struct ToolValueActions: View {
     let label: String
     let value: String
@@ -118,7 +104,7 @@ struct ToolValueActions: View {
     @State private var copied = false
 
     var body: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 2) {
             Button {
                 let pasteboard = NSPasteboard.general
                 pasteboard.clearContents()
@@ -130,7 +116,8 @@ struct ToolValueActions: View {
                 }
             } label: {
                 Image(systemName: copied ? "checkmark.circle.fill" : "doc.on.doc")
-                    .font(.caption)
+                    .frame(width: 32, height: 28)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.borderless)
             .foregroundStyle(copied ? Color.green : Color.secondary)
@@ -140,7 +127,9 @@ struct ToolValueActions: View {
             Button {
                 showQr = true
             } label: {
-                Image(systemName: "qrcode").font(.caption)
+                Image(systemName: "qrcode")
+                    .frame(width: 32, height: 28)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.borderless)
             .foregroundStyle(.secondary)
@@ -149,6 +138,8 @@ struct ToolValueActions: View {
         .disabled(value.isEmpty)
         .opacity(value.isEmpty ? 0 : 1)
         .sheet(isPresented: $showQr) {
+            // QrDisplaySheet chunks anything past one code's capacity,
+            // so a pretty-printed JSON blob paginates instead of failing.
             QrDisplaySheet(title: label, content: value) { showQr = false }
         }
     }
@@ -159,4 +150,91 @@ struct ToolValueActions: View {
 /// read acceptably too.
 func errorText(_ error: Error) -> String {
     String(describing: error)
+}
+
+// MARK: - the form's buttons, in the pane's bottom bar
+
+/// One button a workbench form wants in its pane's bottom bar.
+///
+/// The forms sit inside the pane's scroller, and the bar belongs to the
+/// pane, outside it. So a form says what its buttons are — as a
+/// preference, the way a view says its title — and the pane draws them.
+struct ToolBarAction: Equatable {
+    let title: String
+    let systemImage: String
+    var disabled = false
+    /// Which form this came from; see ``ToolBarActionsModifier``.
+    fileprivate var owner = UUID()
+    let action: () -> Void
+
+    init(_ title: String, systemImage: String, disabled: Bool = false, action: @escaping () -> Void) {
+        self.title = title
+        self.systemImage = systemImage
+        self.disabled = disabled
+        self.action = action
+    }
+
+    /// The closure is left out: two closures cannot be compared, and
+    /// one made on an earlier pass of the same form still reads and
+    /// writes that form's `@State`.
+    static func == (a: ToolBarAction, b: ToolBarAction) -> Bool {
+        a.title == b.title && a.systemImage == b.systemImage
+            && a.disabled == b.disabled && a.owner == b.owner
+    }
+}
+
+private struct ToolBarActionsKey: PreferenceKey {
+    static let defaultValue: [ToolBarAction] = []
+    static func reduce(value: inout [ToolBarAction], nextValue: () -> [ToolBarAction]) {
+        value += nextValue()
+    }
+}
+
+/// Stamps the actions with the form they belong to. Seven converters
+/// each have a Convert and a Clear that look alike; without the stamp,
+/// switching from one to the next would be no change, and the bar would
+/// go on pressing the buttons of the form that had left.
+private struct ToolBarActionsModifier: ViewModifier {
+    @State private var owner = UUID()
+    let actions: [ToolBarAction]
+
+    func body(content: Content) -> some View {
+        content.preference(key: ToolBarActionsKey.self, value: actions.map {
+            var action = $0
+            action.owner = owner
+            return action
+        })
+    }
+}
+
+/// Holds what the form on screen asked for, and draws it.
+private struct ToolBottomBar: ViewModifier {
+    @State private var actions: [ToolBarAction] = []
+
+    func body(content: Content) -> some View {
+        content
+            .onPreferenceChange(ToolBarActionsKey.self) { actions = $0 }
+            .bottomBar {
+                ForEach(actions.indices, id: \.self) { index in
+                    let item = actions[index]
+                    Button(action: item.action) {
+                        Label(item.title, systemImage: item.systemImage)
+                    }
+                    .disabled(item.disabled)
+                }
+            }
+    }
+}
+
+extension View {
+    /// A workbench form's buttons, in the order the bar shows them:
+    /// Clear at the left, then the operation, next to Back.
+    func toolBarActions(_ actions: [ToolBarAction]) -> some View {
+        modifier(ToolBarActionsModifier(actions: actions))
+    }
+
+    /// The bottom bar of a pane whose forms use ``toolBarActions(_:)``.
+    func toolBottomBar() -> some View {
+        modifier(ToolBottomBar())
+    }
 }

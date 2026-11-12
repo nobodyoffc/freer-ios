@@ -102,8 +102,8 @@ final class WalkthroughTests: XCTestCase {
 
         // Every tile, in grid order.
         let tiles = ["News", "Convert", "Tools", "Protocol", "Service", "Code",
-                     "Proof", "Token", "APP", "Overview", "Secret", "Files",
-                     "Logs", "TX", "Cash", "First FCH", "Receive", "Pay",
+                     "Proof", "Token", "APP", "Secret", "Files",
+                     "TX", "Cash", "Receive", "Pay",
                      "Square", "Team", "Room", "Contact", "Cmail", "Talk",
                      "Image", "Text", "Statement", "Sound", "Video"]
         for title in tiles {
@@ -129,10 +129,31 @@ final class WalkthroughTests: XCTestCase {
             sleep(1)
         }
 
+        // The gear is a menu: a page of settings per row, then the two
+        // panes that have no tile.
+        app.swipeDown()
         app.buttons["Settings"].firstMatch.tap()
         sleep(1)
-        snap("pane-Settings")
+        snap("settings-menu")
+        app.buttons["Identity"].firstMatch.tap()
+        sleep(2)
+        snap("pane-Settings-Identity")
         app.buttons["Back"].firstMatch.tap()
+        sleep(1)
+        for item in ["Appearance", "Cmail", "Security", "Maintenance", "First FCH", "Logs"] {
+            app.buttons["Settings"].firstMatch.tap()
+            sleep(1)
+            let row = app.buttons[item].firstMatch
+            guard row.waitForExistence(timeout: 3) else {
+                XCTFail("\(item) is not in the settings menu")
+                continue
+            }
+            row.tap()
+            sleep(2)
+            snap("pane-Settings-" + item.replacingOccurrences(of: " ", with: "-"))
+            app.buttons["Back"].firstMatch.tap()
+            sleep(1)
+        }
         app.buttons["Identity — switch the live FID"].tap()
         sleep(1)
         snap("person-menu")
@@ -179,6 +200,102 @@ final class WalkthroughTests: XCTestCase {
         XCTAssertTrue(app.buttons["Lock vault"].exists, "home again")
     }
 
+    /// Convert and Tools: a form's operation and Clear are in the pane's
+    /// bottom bar, and follow the form when a chip changes it. Run after
+    /// ``testWalkthrough()`` has made the vault.
+    func testWorkbenchBars() {
+        app.launchArguments += ["-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
+        app.launch()
+        reachHome()
+        let convertTile = app.buttons["Convert"].firstMatch
+        for _ in 0..<3 where !(convertTile.exists && convertTile.isHittable) { app.swipeUp() }
+        convertTile.tap()
+        sleep(2)
+        let convert = app.buttons["Convert"].firstMatch
+        XCTAssertTrue(convert.exists, "Convert in the bottom bar")
+        XCTAssertFalse(convert.isEnabled, "nothing to convert yet")
+        app.buttons["Use my FID"].firstMatch.tap()
+        XCTAssertTrue(convert.isEnabled, "an address to convert")
+        // A tap in the editor brings the keyboard; one outside it, on
+        // the form's heading, sends it away again.
+        app.textViews.firstMatch.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5), "the keyboard")
+        snap("convert-keyboard")
+        app.staticTexts["Addresses across chains"].tap()
+        sleep(1)
+        XCTAssertFalse(app.keyboards.firstMatch.exists, "the keyboard is gone")
+        convert.tap()
+        sleep(1)
+        snap("convert-address")
+        app.buttons["Clear"].firstMatch.tap()
+        XCTAssertFalse(convert.isEnabled, "cleared")
+        // Another form: its own button, not the one that left.
+        app.buttons["String"].firstMatch.tap()
+        sleep(1)
+        XCTAssertTrue(app.buttons["Decode"].exists, "Decode in the bottom bar")
+        XCTAssertFalse(app.buttons["Convert"].exists, "the address form's button is gone")
+        snap("convert-string")
+        app.buttons["Time"].firstMatch.tap()
+        app.buttons["Now"].firstMatch.tap()
+        sleep(1)
+        snap("convert-time")
+        app.buttons["Back"].firstMatch.tap()
+        sleep(1)
+
+        app.buttons["Tools"].firstMatch.tap()
+        sleep(2)
+        XCTAssertTrue(app.buttons["Encrypt"].exists, "Encrypt in the bottom bar")
+        app.buttons["Hash"].firstMatch.tap()
+        sleep(1)
+        snap("tools-hash")
+        app.buttons["Random"].firstMatch.tap()
+        app.buttons["New"].firstMatch.tap()
+        sleep(1)
+        snap("tools-random")
+        app.buttons["Back"].firstMatch.tap()
+    }
+
+    /// A chat list with something in it: makes a room, which needs no
+    /// chain, and opens the Room tile on the list that now has a row.
+    /// The other walks only ever see these lists empty. Run after
+    /// ``testWalkthrough()`` has made the vault.
+    func testRoomList() {
+        app.launchArguments += ["-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
+        app.launch()
+        reachHome()
+        let tile = app.buttons["Room"].firstMatch
+        for _ in 0..<3 where !(tile.exists && tile.isHittable) { app.swipeUp() }
+        tile.tap()
+        sleep(2)
+        snap("room-list-before")
+        if !app.buttons["Select"].exists {
+            app.buttons["New room"].firstMatch.tap()
+            sleep(1)
+            let name = app.textFields.firstMatch
+            XCTAssertTrue(name.waitForExistence(timeout: 5), "the room form")
+            name.tap()
+            name.typeText("Walkthrough room")
+            snap("room-form")
+            app.buttons["Create room"].firstMatch.tap()
+            sleep(3)
+            snap("room-created")
+        }
+        // Out to the grid and in again, as a tap on the tile arrives.
+        for _ in 0..<3 where !app.buttons["Lock vault"].exists {
+            let backs = app.buttons.matching(identifier: "Back").allElementsBoundByIndex
+            backs.last?.tap()
+            sleep(1)
+        }
+        XCTAssertTrue(app.buttons["Lock vault"].exists, "home again")
+        for _ in 0..<3 where !(tile.exists && tile.isHittable) { app.swipeUp() }
+        tile.tap()
+        sleep(3)
+        snap("room-list")
+        XCTAssertTrue(app.buttons["Select"].waitForExistence(timeout: 10), "a list with a room in it")
+        app.buttons["Back"].firstMatch.tap()
+        XCTAssertTrue(app.buttons["Lock vault"].waitForExistence(timeout: 10), "home, and the app still answers")
+    }
+
     /// The same app in Simplified Chinese: the unlock screen, the home
     /// grid and a few panes, to see that the translation is found and fits.
     ///
@@ -202,7 +319,7 @@ final class WalkthroughTests: XCTestCase {
         snap("zh-home")
         app.swipeUp()
         snap("zh-home-grid")
-        for title in ["对话", "钞票", "支付", "密信", "协议", "概览"] {
+        for title in ["对话", "钞票", "支付", "密信", "协议"] {
             let tile = app.buttons[title].firstMatch
             guard tile.waitForExistence(timeout: 3) else {
                 XCTFail("tile \(title) is not on screen")
@@ -215,9 +332,13 @@ final class WalkthroughTests: XCTestCase {
             app.buttons["返回"].firstMatch.tap()
             sleep(1)
         }
+        app.swipeDown()
         app.buttons["设置"].firstMatch.tap()
         sleep(1)
         snap("zh-设置")
+        app.buttons["外观"].firstMatch.tap()
+        sleep(1)
+        snap("zh-外观")
 
         // The language picker: choose English, and the note about
         // restarting appears. Then put the choice back, so the next run

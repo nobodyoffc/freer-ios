@@ -14,9 +14,48 @@ import FCUI
 ///   the AppState to reconnect: to the home BASE when following one,
 ///   else to this server. Subsequent Overview Refreshes hit the live
 ///   server immediately.
+/// The pages of Settings, in the order the home screen's gear menu lists
+/// them. Android's settings are a popup menu of separate screens; the
+/// Mac's are one form, which on a phone is a long way to scroll for the
+/// one row wanted. Each page here is a section or two of that form.
+enum SettingsPage: String, CaseIterable, Identifiable {
+    /// The CID, the master, the home and this device's BASE.
+    case identity
+    case appearance
+    case mail
+    case security
+    case maintenance
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .identity:    return String(localized: "Identity")
+        case .appearance:  return String(localized: "Appearance")
+        case .mail:        return String(localized: "Cmail")
+        case .security:    return String(localized: "Security")
+        case .maintenance: return String(localized: "Maintenance")
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .identity:    return "person.text.rectangle"
+        case .appearance:  return "paintbrush"
+        case .mail:        return "envelope"
+        case .security:    return "lock.shield"
+        case .maintenance: return "wrench.adjustable"
+        }
+    }
+}
+
 struct SettingsView: View {
     @Environment(AppState.self) private var appState
     let session: ActiveSession
+    /// The one group of settings on screen. Every page loads the whole
+    /// of the preferences and Save writes the whole of them back, so a
+    /// page saves its own fields and leaves the others as they were.
+    var page: SettingsPage = .identity
 
     /// The master the chain holds for the main FID, if any: the one thing
     /// besides the user's word that can settle the backup. Same rule as
@@ -90,7 +129,9 @@ struct SettingsView: View {
         .bottomBar()
         .onAppear {
             load()
-            Task { await loadNoticeFee() }
+            // A page of its own has nothing to fold away.
+            if page == .maintenance { maintenanceExpanded = true }
+            if page == .mail { Task { await loadNoticeFee() } }
         }
         .alert("Purge cash cache for \(session.liveFid.elidingMiddle(head: 6, tail: 6))?",
                isPresented: $showPurgeConfirm) {
@@ -111,10 +152,57 @@ struct SettingsView: View {
 
     private var form: some View {
         Form {
-            // First: who this FID is on the chain matters more than how
-            // this device reaches it.
-            IdentitySettingsSection(session: session) { baseOnThisMac }
+            switch page {
+            case .identity:
+                IdentitySettingsSection(session: session) { baseOnThisMac }
+            case .appearance:
+                appearanceSection
+            case .mail:
+                mailSection
+            case .security:
+                securitySection
+            case .maintenance:
+                maintenanceSection
+            }
 
+            if let err = saveError {
+                Section {
+                    CopyableText(err, font: .callout)
+                        .foregroundStyle(.red)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            // Maintenance has a button and nothing to save.
+            if page != .maintenance {
+                saveSection
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    private var saveSection: some View {
+            Section {
+                HStack {
+                    if saveOk {
+                        Label("Saved", systemImage: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
+                            .font(.callout)
+                    }
+                    Spacer()
+                    Button {
+                        Task { await saveAndApply() }
+                    } label: {
+                        Text("Save").frame(width: 100)
+                    }
+                    .keyboardShortcut(.defaultAction)
+                    .buttonStyle(.borderedProminent)
+                    .disabled(!canSave)
+                }
+            }
+    }
+
+    private var appearanceSection: some View {
             Section("Appearance") {
                 LabeledField(String(localized: "Theme")) {
                     Picker("", selection: $theme) {
@@ -148,39 +236,6 @@ struct SettingsView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
-
-            mailSection
-            securitySection
-            maintenanceSection
-
-            if let err = saveError {
-                Section {
-                    CopyableText(err, font: .callout)
-                        .foregroundStyle(.red)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-
-            Section {
-                HStack {
-                    if saveOk {
-                        Label("Saved", systemImage: "checkmark.circle.fill")
-                            .foregroundStyle(.green)
-                            .font(.callout)
-                    }
-                    Spacer()
-                    Button {
-                        Task { await saveAndApply() }
-                    } label: {
-                        Text("Save").frame(width: 100)
-                    }
-                    .keyboardShortcut(.defaultAction)
-                    .buttonStyle(.borderedProminent)
-                    .disabled(!canSave)
-                }
-            }
-        }
-        .formStyle(.grouped)
     }
 
     // MARK: - sections

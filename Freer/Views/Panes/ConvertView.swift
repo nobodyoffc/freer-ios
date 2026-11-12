@@ -8,9 +8,9 @@ import FCUI
 /// Script, Prikey, Pubkey, Address, JSON, String, Time.
 ///
 /// Android ships these as seven separate activities behind a popup
-/// menu; here they are seven segments of one pane, the same shape
-/// ``ToolsView`` uses for Android's `tools/` activities. Every result
-/// is click-to-copy.
+/// menu; here they are seven chips at the top of one pane, the same
+/// shape ``ToolsView`` uses for Android's `tools/` activities. Every
+/// result is click-to-copy.
 struct ConvertView: View {
     let session: ActiveSession
 
@@ -33,11 +33,7 @@ struct ConvertView: View {
             PaneHeader(session: session)
             Divider()
 
-            Picker("Converter", selection: $converter) {
-                ForEach(Converter.allCases) { Text($0.rawValue).tag($0) }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
+            ChoiceChips("Converter", selection: $converter)
 
             ScrollView {
                 Group {
@@ -61,7 +57,7 @@ struct ConvertView: View {
         }
         .padding()
         .sheetFrame(minWidth: 480)
-        .bottomBar()
+        .toolBottomBar()
     }
 }
 
@@ -82,16 +78,16 @@ private struct ScriptConvertView: View {
 
             ToolTextEditor(placeholder: String(localized: "Script hex, or ASM"), text: $input, minHeight: 90)
 
-            HStack {
-                Button("Convert", action: convert)
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(input.trimmed.isEmpty)
-                Button("Clear") { input = ""; result = ""; error = nil }
-            }
-
             if let error { ConvertError(error) }
             ToolResultTable(rows: result.isEmpty ? [] : [(resultLabel, result)])
         }
+        // In the pane's bottom bar: Clear first, the operation under the thumb.
+        .toolBarActions([
+            ToolBarAction(String(localized: "Clear"), systemImage: "xmark") {
+                input = ""; result = ""; error = nil
+            },
+            ToolBarAction(String(localized: "Convert"), systemImage: "arrow.left.arrow.right", disabled: input.trimmed.isEmpty, action: convert),
+        ])
     }
 
     private func convert() {
@@ -158,21 +154,18 @@ private struct PrikeyConvertView: View {
                 .buttonStyle(.borderless)
             }
 
-            Picker("Format", selection: $format) {
-                ForEach(Format.allCases) { Text($0.rawValue).tag($0) }
-            }
-            .pickerStyle(.segmented)
-
-            HStack {
-                Button("Convert", action: convert)
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(input.trimmed.isEmpty)
-                Button("Clear") { input = ""; result = ""; error = nil }
-            }
+            ChoiceChips("Format", selection: $format)
 
             if let error { ConvertError(error) }
             ToolResultTable(rows: result.isEmpty ? [] : [(format.rawValue, result)])
         }
+        // In the pane's bottom bar: Clear first, the operation under the thumb.
+        .toolBarActions([
+            ToolBarAction(String(localized: "Clear"), systemImage: "xmark") {
+                input = ""; result = ""; error = nil
+            },
+            ToolBarAction(String(localized: "Convert"), systemImage: "arrow.left.arrow.right", disabled: input.trimmed.isEmpty, action: convert),
+        ])
     }
 
     private func useMyKey() {
@@ -229,16 +222,16 @@ private struct PubkeyConvertView: View {
                 .buttonStyle(.borderless)
             }
 
-            HStack {
-                Button("Convert", action: convert)
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(input.trimmed.isEmpty)
-                Button("Clear") { input = ""; rows = []; error = nil }
-            }
-
             if let error { ConvertError(error) }
             ToolResultTable(rows: rows)
         }
+        // In the pane's bottom bar: Clear first, the operation under the thumb.
+        .toolBarActions([
+            ToolBarAction(String(localized: "Clear"), systemImage: "xmark") {
+                input = ""; rows = []; error = nil
+            },
+            ToolBarAction(String(localized: "Convert"), systemImage: "arrow.left.arrow.right", disabled: input.trimmed.isEmpty, action: convert),
+        ])
     }
 
     private func useMyKey() {
@@ -293,13 +286,6 @@ private struct AddressConvertView: View {
             }
             .buttonStyle(.borderless)
 
-            HStack {
-                Button("Convert", action: convert)
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(input.trimmed.isEmpty)
-                Button("Clear") { input = ""; rows = []; note = nil; error = nil }
-            }
-
             if let error { ConvertError(error) }
             if let note {
                 Text(note)
@@ -309,6 +295,13 @@ private struct AddressConvertView: View {
             }
             ToolResultTable(rows: rows)
         }
+        // In the pane's bottom bar: Clear first, the operation under the thumb.
+        .toolBarActions([
+            ToolBarAction(String(localized: "Clear"), systemImage: "xmark") {
+                input = ""; rows = []; note = nil; error = nil
+            },
+            ToolBarAction(String(localized: "Convert"), systemImage: "arrow.left.arrow.right", disabled: input.trimmed.isEmpty, action: convert),
+        ])
     }
 
     private func convert() {
@@ -357,16 +350,16 @@ private struct JsonConvertView: View {
 
             ToolTextEditor(placeholder: "JSON", text: $input, minHeight: 120)
 
-            HStack {
-                Button("Convert", action: convert)
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(input.trimmed.isEmpty)
-                Button("Clear") { input = ""; result = ""; error = nil }
-            }
-
             if let error { ConvertError(error) }
             ToolResultTable(rows: result.isEmpty ? [] : [(resultLabel, result)])
         }
+        // In the pane's bottom bar: Clear first, the operation under the thumb.
+        .toolBarActions([
+            ToolBarAction(String(localized: "Clear"), systemImage: "xmark") {
+                input = ""; result = ""; error = nil
+            },
+            ToolBarAction(String(localized: "Convert"), systemImage: "arrow.left.arrow.right", disabled: input.trimmed.isEmpty, action: convert),
+        ])
     }
 
     private func convert() {
@@ -401,20 +394,11 @@ private struct StringConvertView: View {
 
             ToolTextEditor(placeholder: String(localized: "Text to decode"), text: $input)
 
-            Picker("Read as", selection: $encoding) {
-                Text("Auto").tag(StringCodec.Encoding?.none)
-                ForEach(StringCodec.Encoding.allCases, id: \.self) { e in
-                    Text(e.rawValue).tag(StringCodec.Encoding?.some(e))
-                }
-            }
-            .pickerStyle(.segmented)
-
-            HStack {
-                Button("Decode", action: decode)
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(input.trimmed.isEmpty)
-                Button("Clear") { input = ""; rows = []; detected = nil; error = nil }
-            }
+            ChoiceChips(
+                "Read as", selection: $encoding,
+                options: [(StringCodec.Encoding?.none, String(localized: "Auto"))]
+                    + StringCodec.Encoding.allCases.map { (StringCodec.Encoding?.some($0), $0.rawValue) }
+            )
 
             if let error { ConvertError(error) }
             if let detected {
@@ -422,6 +406,13 @@ private struct StringConvertView: View {
             }
             ToolResultTable(rows: rows)
         }
+        // In the pane's bottom bar: Clear first, the operation under the thumb.
+        .toolBarActions([
+            ToolBarAction(String(localized: "Clear"), systemImage: "xmark") {
+                input = ""; rows = []; detected = nil; error = nil
+            },
+            ToolBarAction(String(localized: "Decode"), systemImage: "arrow.left.arrow.right", disabled: input.trimmed.isEmpty, action: decode),
+        ])
     }
 
     private func decode() {
@@ -509,19 +500,20 @@ private struct TimeConvertView: View {
                 }
             }
 
-            HStack {
-                Button("Now") { sync(from: .millis, value: String(nowMillis())) }
-                    .keyboardShortcut(.defaultAction)
-                Button("Clear") {
-                    syncing = true
-                    values = [:]
-                    error = nil
-                    syncing = false
-                }
-            }
-
             if let error { ConvertError(error) }
         }
+        // In the pane's bottom bar: Clear first, the operation under the thumb.
+        .toolBarActions([
+            ToolBarAction(String(localized: "Clear"), systemImage: "xmark") {
+                syncing = true
+                values = [:]
+                error = nil
+                syncing = false
+            },
+            ToolBarAction(String(localized: "Now"), systemImage: "clock") {
+                sync(from: .millis, value: String(nowMillis()))
+            },
+        ])
         .onAppear {
             if values.isEmpty { sync(from: .millis, value: String(nowMillis())) }
         }

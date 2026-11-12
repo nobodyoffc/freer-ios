@@ -14,14 +14,20 @@ private struct SigningGroup: Identifiable {
 /// FID's card, the getting-started checklist while a step is left, and
 /// under them a three-column grid of tiles — one per thing the app does.
 ///
+/// **This screen is also the overview.** The Mac has a pane that says
+/// what is waiting; Android says it on the grid itself, as a count on the
+/// corner of the tile that holds it, and so does this: unread chats and
+/// Cmail, cashes not yet looked at, and a line above the grid for a DOCK
+/// that has stopped delivering until it is paid.
+///
 /// **A tile pushes a pane.** Each pane is the Mac app's, where the same
 /// list is a sidebar; a phone has no room for a sidebar beside its
 /// detail, so the grid is the sidebar and the navigation stack is the
 /// detail column. ``AppState/selectedPane`` stays the single place that
 /// says which pane is open, so everything that already steers by it —
-/// an Overview tile opening Chat on its Teams tab, an identity switch
+/// the checklist opening Chat on its Squares tab, an identity switch
 /// falling back from a pane the new identity cannot use — steers this
-/// screen too, unchanged.
+/// screen too, unchanged. Its `.overview` is this grid.
 struct HomeView: View {
     @Environment(AppState.self) private var appState
 
@@ -53,6 +59,12 @@ struct HomeView: View {
     /// answer arrives, so it has nowhere else to land.
     @State private var identityNote: String?
 
+    /// What the tiles' corners count. Read from local stores, so it is
+    /// right offline and costs nothing to read again.
+    @State private var badges = HomeBadges()
+    /// The DOCK whose top-up sheet is open.
+    @State private var toppingUp: DockRegistry.Unpaid?
+
     var body: some View {
         if let session = appState.activeSession {
             content(for: session)
@@ -76,6 +88,7 @@ struct HomeView: View {
                 VStack(alignment: .leading, spacing: 16) {
                     PaneHeader(session: session)
                     GettingStartedCard(session: session)
+                    dockNotices
                     grid(for: session)
                 }
                 .padding(.horizontal, 16)
@@ -100,14 +113,14 @@ struct HomeView: View {
                     // `refreshCidInfoAsync`.
                     .id(appState.liveFid)
                     .environment(\.paneIdentityHidden, true)
-                    .navigationTitle(pane.title)
+                    .navigationTitle(title(of: pane))
                     .navigationBarTitleDisplayMode(.inline)
                     .toolbar {
                         // The title at the left end, as Android's toolbar
                         // has it; the centre, where iOS would put it, is
                         // left empty.
                         ToolbarItem(placement: .topBarLeading) {
-                            Text(pane.title)
+                            Text(title(of: pane))
                                 .font(.title3.weight(.semibold))
                                 .lineLimit(1)
                                 // Its own width, whatever the bar would
@@ -133,10 +146,25 @@ struct HomeView: View {
         }
         // Back to the grid. Said to the app state too, so that tapping
         // the same tile again is a change it can see.
-        .onChange(of: path) { _, now in
+        .onChange(of: path) { was, now in
             if now.isEmpty, appState.selectedPane != .overview {
                 appState.selectedPane = .overview
             }
+            // Going in, the cashes in the cache are about to be shown;
+            // coming out, so are the ones the pane fetched meanwhile.
+            if was == [.cash] || now == [.cash] {
+                SeenCashes.markAllSeen(for: session)
+            }
+            if now.isEmpty {
+                Task { await refresh(session) }
+            }
+        }
+        // On arrival, and again for each identity lived as.
+        .task(id: appState.liveFid) { await refresh(session) }
+        // A background collect filed something.
+        .onChange(of: appState.inboxRevision) { _, _ in reloadBadges(session) }
+        .sheet(item: $toppingUp) { unpaid in
+            DockTopUpSheet(session: session, unpaid: unpaid, onClose: { toppingUp = nil })
         }
         .sheet(isPresented: $showQrTool) {
             QrToolSheet { showQrTool = false }
@@ -260,9 +288,7 @@ struct HomeView: View {
             headerButton("qrcode.viewfinder", label: String(localized: "QR — scan or make QR codes")) {
                 showQrTool = true
             }
-            headerButton("gearshape", label: String(localized: "Settings")) {
-                appState.selectedPane = .settings
-            }
+            settingsMenu
             Button {
                 showPersonMenu = true
             } label: {
@@ -285,6 +311,65 @@ struct HomeView: View {
         }
         .foregroundStyle(.secondary)
         .accessibilityLabel(label)
+    }
+
+    /// Android's settings menu: one row per settings screen, then the
+    /// two screens about the app's own business that are not worth a
+    /// tile — who is asking for a first FCH, and what the app has logged.
+    private var settingsMenu: some View {
+        Menu {
+            Section {
+                ForEach(SettingsPage.allCases) { page in
+                    Button {
+                        appState.openSettings(page)
+                    } label: {
+                        Label(page.title, systemImage: page.systemImage)
+                    }
+                }
+            }
+            Section {
+                Button {
+                    appState.openBackupPrikey()
+                } label: {
+                    Label("Back up prikey…", systemImage: "key.viewfinder")
+                }
+            }
+            Section {
+                Button {
+                    appState.openFirstFchBoard()
+                } label: {
+                    // Counted only for an identity that asked to be told.
+                    let waiting = appState.newcomersWaiting
+                    Label(
+                        waiting > 0
+                            ? String(localized: "First FCH") + " (\(waiting))"
+                            : String(localized: "First FCH"),
+                        systemImage: WalletPane.helpBeginners.systemImage
+                    )
+                }
+                Button {
+                    appState.selectedPane = .logs
+                } label: {
+                    Label(WalletPane.logs.title, systemImage: WalletPane.logs.systemImage)
+                }
+            }
+        } label: {
+            Image(systemName: "gearshape")
+                .font(.system(size: 20))
+                .frame(width: 44, height: 44)
+                .overlay(alignment: .topTrailing) {
+                    CountBadge(count: appState.newcomersWaiting)
+                        .offset(x: -2, y: 4)
+                }
+        }
+        .foregroundStyle(.secondary)
+        .accessibilityLabel(Text("Settings"))
+    }
+
+    /// A pane's name in its title bar. Settings is five pages behind one
+    /// pane, and each is titled as the menu named it.
+    private func title(of pane: WalletPane) -> String {
+        pane == .settings ? appState.settingsPage.title : pane.title
     }
 
     /// The person menu — who am I living as, and every identity role I
@@ -326,6 +411,9 @@ struct HomeView: View {
         return LazyVGrid(columns: Self.columns, spacing: 8) {
             ForEach(HomeTile.all) { tile in
                 let closedReason = tile.closedReason(canSign: canSign)
+                // A shut pane counts nothing: the number would be an
+                // invitation to open what cannot be opened.
+                let count = closedReason == nil ? badges.count(for: tile) : 0
                 Button {
                     if let closedReason {
                         identityNote = closedReason
@@ -340,6 +428,10 @@ struct HomeView: View {
                         Image(systemName: closedReason == nil ? tile.systemImage : "lock")
                             .font(.system(size: 26))
                             .frame(height: 32)
+                            .overlay(alignment: .topTrailing) {
+                                CountBadge(count: count)
+                                    .offset(x: 16, y: -6)
+                            }
                         Text(tile.title)
                             .font(.footnote)
                             .lineLimit(1)
@@ -354,22 +446,112 @@ struct HomeView: View {
                 // switch identity reads as a bug.
                 .foregroundStyle(closedReason == nil ? AnyShapeStyle(.primary) : AnyShapeStyle(.tertiary))
                 .accessibilityHint(closedReason ?? "")
+                // The tile keeps its name, for VoiceOver and for the UI
+                // tests that find it by one; the count is its value.
+                .accessibilityValue(count > 0 ? String(localized: "\(String(count)) new") : "")
             }
         }
+    }
+
+    // MARK: - what is waiting
+
+    /// DOCKs that stopped handing messages over until their balance is
+    /// topped up. Above the grid rather than on a tile: it is the one
+    /// thing here that stops the other counts from arriving at all.
+    ///
+    /// A paid top-up keeps its line, turned blue, until the server serves
+    /// again: taking it away at Pay would read as fixed before anything
+    /// was credited, and an orange "Top up" still showing would invite
+    /// paying twice.
+    @ViewBuilder
+    private var dockNotices: some View {
+        ForEach(appState.unpaidDocks) { unpaid in
+            let host = URLComponents(string: unpaid.dockUrl)?.host ?? unpaid.dockUrl
+            let look: (title: String, symbol: String, tint: Color, detail: String) = {
+                switch unpaid.stage() {
+                case .needsPayment:
+                    return (String(localized: "Top up \(host)"),
+                            "creditcard.trianglebadge.exclamationmark", .orange,
+                            String(localized: "\(unpaid.dockUrl) stopped handing over messages: \(unpaid.message). Click to top up your balance there."))
+                case .confirming:
+                    return (String(localized: "Top-up confirming: \(host)"),
+                            "hourglass", .blue,
+                            String(localized: "Paid. Messages from \(unpaid.dockUrl) resume once a block confirms the payment and the server credits it. Click for the txid."))
+                case .lapsed:
+                    return (String(localized: "Top-up not credited: \(host)"),
+                            "exclamationmark.arrow.circlepath", .orange,
+                            String(localized: "A top-up to \(unpaid.dockUrl) was sent over half an hour ago and the server still refuses. Click to check the txid or pay again."))
+                }
+            }()
+            Button {
+                toppingUp = unpaid
+            } label: {
+                HStack(alignment: .top, spacing: 10) {
+                    Image(systemName: look.symbol)
+                        .font(.title3)
+                        .foregroundStyle(look.tint)
+                        .frame(width: 28)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(look.title).font(.callout.weight(.semibold))
+                        Text(look.detail)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(look.tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
+                .contentShape(RoundedRectangle(cornerRadius: 12))
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    private func reloadBadges(_ session: ActiveSession) {
+        var now = HomeBadges()
+        now.cash = SeenCashes.newCount(for: session)
+        now.mail = (try? session.mails.unreadCount()) ?? 0
+        for style in ChatModeStyle.all {
+            now.unread[style.mode] = (try? session.conversations.unread(type: style.mode)) ?? 0
+            // Invitations and agreements waiting on an answer are not
+            // messages and raise no unread count; without them here one
+            // that arrives in the background shows nowhere.
+            now.awaiting[style.mode] = session.awaitingAnswer(type: style.mode)
+        }
+        if now != badges { badges = now }
+    }
+
+    /// The counts as the stores have them, then again once the servers
+    /// have been asked. Nothing here reports a failure: the last known
+    /// numbers stay, and the pane behind each tile says what went wrong.
+    private func refresh(_ session: ActiveSession) async {
+        reloadBadges(session)
+        // Coins that arrived since the cache was written are what the
+        // Cash badge counts, and what the card's balance is waiting for.
+        _ = try? await session.wallet.refreshCashes(forFid: session.liveFid)
+        await appState.refreshLiveFidInfo()
+        // Throttled in the session: one query a minute, however often
+        // this screen comes back.
+        await session.refreshTeamAnswers()
+        reloadBadges(session)
     }
 
     private func open(_ tile: HomeTile) {
         switch tile.target {
         case .pane(let pane):
-            if pane == .overview {
-                // `selectedPane` already says overview — that is what the
-                // grid is — so there is no change for the stack to follow.
-                path = [.overview]
-            } else {
-                appState.selectedPane = pane
-            }
+            appState.selectedPane = pane
         case .chat(let mode):
-            appState.openChat(mode: mode)
+            // A team's count that is all offers is cleared by answering
+            // them, not by looking at the list, so the tile goes where
+            // the answering happens.
+            if mode == .team, badges.unread[.team, default: 0] == 0, badges.awaiting[.team, default: 0] > 0 {
+                appState.openTeamOffers()
+            } else {
+                appState.openChat(mode: mode)
+            }
         case .pay:
             appState.sendMode = .send
             appState.selectedPane = .send
@@ -384,7 +566,8 @@ struct HomeView: View {
     private func detail(_ pane: WalletPane, for session: ActiveSession) -> some View {
         switch pane {
         case .overview:
-            OverviewView(session: session)
+            // The grid itself; never pushed.
+            EmptyView()
         case .send:
             SendView(session: session)
         case .cash:
@@ -434,7 +617,7 @@ struct HomeView: View {
         case .logs:
             SystemMessagesView(session: session)
         case .settings:
-            SettingsView(session: session)
+            SettingsView(session: session, page: appState.settingsPage)
         }
     }
 
@@ -461,6 +644,46 @@ struct HomeView: View {
     }
 }
 
+// MARK: - badges
+
+/// What is waiting behind the tiles that can have something waiting.
+struct HomeBadges: Equatable {
+    /// Cashes the Cash pane has not shown yet.
+    var cash = 0
+    var mail = 0
+    var unread: [ImType: Int] = [:]
+    /// Invitations and agreements that want an answer.
+    var awaiting: [ImType: Int] = [:]
+
+    func count(for tile: HomeTile) -> Int {
+        switch tile.target {
+        case .pane(.cash): return cash
+        case .pane(.mail): return mail
+        case .chat(let mode): return unread[mode, default: 0] + awaiting[mode, default: 0]
+        case .pane, .pay, .receive: return 0
+        }
+    }
+}
+
+/// Android's red count on a tile's corner. Nothing at zero.
+struct CountBadge: View {
+    let count: Int
+
+    var body: some View {
+        if count > 0 {
+            Text(verbatim: count > 99 ? "99+" : String(count))
+                .font(.caption2.weight(.bold))
+                .monospacedDigit()
+                .foregroundStyle(.white)
+                .padding(.horizontal, 5)
+                .frame(minWidth: 18, minHeight: 18)
+                .background(Color.red, in: Capsule())
+                .fixedSize()
+                .accessibilityHidden(true)
+        }
+    }
+}
+
 // MARK: - tiles
 
 /// One square of the home grid.
@@ -469,7 +692,8 @@ struct HomeView: View {
 /// Cmail is on their phone finds it in the same place here. Where Android
 /// has a tile this app has no screen for yet (TOTP, Todo, Carve), the
 /// slot goes to the nearest thing it does have; the tiles Android lacks
-/// follow at the end.
+/// follow at the end. Logs and First FCH are in the settings menu, where
+/// Android has them.
 struct HomeTile: Identifiable {
     enum Target {
         case pane(WalletPane)
@@ -507,9 +731,8 @@ struct HomeTile: Identifiable {
         pane(.news), pane(.convert, String(localized: "Convert")), pane(.crypto, String(localized: "Tools")),
         pane(.protocols, String(localized: "Protocol")), pane(.services, String(localized: "Service")), pane(.codes),
         pane(.proofs, String(localized: "Proof")), pane(.tokens, String(localized: "Token")), pane(.apps, String(localized: "APP")),
-        pane(.overview), pane(.secrets, String(localized: "Secret")), pane(.files),
-        pane(.logs), pane(.transactions, String(localized: "TX")), pane(.cash),
-        pane(.helpBeginners, String(localized: "First FCH")),
+        pane(.secrets, String(localized: "Secret")), pane(.files), pane(.transactions, String(localized: "TX")),
+        pane(.cash),
         HomeTile(title: String(localized: "Receive"), systemImage: "qrcode", target: .receive),
         HomeTile(title: String(localized: "Pay"), systemImage: "paperplane", target: .pay),
         HomeTile(title: String(localized: "Square"), systemImage: "megaphone", target: .chat(.square)),

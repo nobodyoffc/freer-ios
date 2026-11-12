@@ -163,6 +163,15 @@ final class AppState {
     /// ``selectedPane``, and so it survives a trip to another pane.
     var sendMode: SendView.Mode = .send
 
+    /// Which page of Settings the pane shows. The home screen's gear is
+    /// a menu of them, as on Android, rather than one long form.
+    private(set) var settingsPage: SettingsPage = .identity
+
+    func openSettings(_ page: SettingsPage) {
+        settingsPage = page
+        selectedPane = .settings
+    }
+
     /// Open the First FCH board, which is the Help beginners pane.
     func openFirstFchBoard() {
         selectedPane = .helpBeginners

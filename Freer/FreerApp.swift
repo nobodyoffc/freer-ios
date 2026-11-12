@@ -17,6 +17,7 @@ struct FreerApp: App {
             AppRouter()
                 .environment(appState)
                 .background(ActivityWatch { [appState] in appState.noteUserActivity() })
+                .background(KeyboardDismissOnTap())
                 .background(ThemeApplier(appState: appState))
         }
     }

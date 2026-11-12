@@ -16,6 +16,7 @@
 "Contact" = "联系人";
 "Talk" = "对话";
 "First FCH" = "首币求助";
+"%@ new" = "%@ 条新内容";
 "QR — scan or make QR codes" = "二维码——扫描或生成二维码";
 "Identity — switch the live FID" = "身份——切换当前 FID";
 "All %@" = "全部%@";

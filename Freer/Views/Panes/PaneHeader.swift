@@ -89,12 +89,13 @@ struct PaneHeader: View {
             .buttonStyle(.plain)
             .help("Show this avatar full size — copy or save the image")
 
+            // As wide as the card: the name line ends in the buttons,
+            // which belong at the screen's right edge.
             VStack(alignment: .leading, spacing: 3) {
                 nameLine
                 labelLine
             }
-
-            Spacer(minLength: 0)
+            .frame(maxWidth: .infinity, alignment: .leading)
           }
           valueRail
         }
@@ -132,6 +133,25 @@ struct PaneHeader: View {
                 )
             }
 
+            // Beside the name, not among the buttons: it says something
+            // and does nothing. Only an identity that cannot sign is
+            // marked — holding the prikey is the ordinary case, and a key
+            // drawn for it looked like a third button that was broken.
+            if let mark = unsignableMark {
+                Image(systemName: mark.symbol)
+                    .foregroundStyle(mark.tint)
+                    .help(mark.help)
+                    .accessibilityLabel(mark.help)
+            }
+
+            Spacer(minLength: 0)
+
+            if let err = appState.liveFidInfoError {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange)
+                    .help("Couldn't refresh on-chain stats — \(err)")
+            }
+
             Button { showQr = true } label: {
                 Image(systemName: "qrcode")
             }
@@ -150,16 +170,6 @@ struct PaneHeader: View {
             }
             .buttonStyle(.borderless)
             .help("Show everything known about this identity")
-
-            Image(systemName: identity.symbol)
-                .foregroundStyle(identity.tint)
-                .help(identity.help)
-
-            if let err = appState.liveFidInfoError {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .foregroundStyle(.orange)
-                    .help("Couldn't refresh on-chain stats — \(err)")
-            }
         }
     }
 
@@ -247,15 +257,11 @@ struct PaneHeader: View {
         }
     }
 
-    /// Which key situation the live FID is in. Replaces the old text
-    /// caption with a single icon — that is what buys the second line
-    /// for the label and metrics without making the bar taller.
-    private var identity: (symbol: String, tint: Color, help: String) {
-        let kind = session.liveKeyInfo.kind
-        if session.canSign {
-            return ("key.fill", .blue, String(localized: "\(kind.rawValue) — this vault holds the prikey and can sign."))
-        }
-        switch kind {
+    /// What the live FID lacks, when the vault holds no prikey for it.
+    /// Nil for an identity that can sign.
+    private var unsignableMark: (symbol: String, tint: Color, help: String)? {
+        if session.canSign { return nil }
+        switch session.liveKeyInfo.kind {
         case .multisig:
             return ("person.2.fill", .purple,
                     String(localized: "Multisig — spending needs the other signers too."))
@@ -288,6 +294,9 @@ struct PaneHeader: View {
                 symbol: "bolt.fill",
                 help: String(localized: "CD — coin-days accumulated, the fuel most on-chain operations are priced in.")
             )
+
+            // At the right edge, under the card's other buttons.
+            Spacer(minLength: 0)
 
             Button {
                 Task { await appState.refreshLiveFidInfo() }

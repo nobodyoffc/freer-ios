@@ -18,7 +18,14 @@ from the Mac's Swift code and laid out like the Android app.
 - **`Freer/Platform/`** is what exists only here: the wrapping toolbar row,
   sheet sizing, the open-panel stand-in, touch tracking for auto-lock, the ringer.
 - **`Freer/Views/HomeView.swift`** is the Android-style home grid. Tiles are
-  listed in `HomeTile.all`, in Android's order.
+  listed in `HomeTile.all`, in Android's order. It is also the overview: the
+  Mac's Overview pane is not here (`WalletPane.overview` means the grid).
+  Tiles carry Android's red counts (`HomeBadges`): unread chats and Cmail,
+  invitations awaiting an answer, and cashes the Cash pane has not shown
+  (`Freer/SeenCashes.swift`). An unpaid DOCK is a line above the grid.
+- The gear on the home screen is a menu, as on Android: one row per
+  `SettingsPage` (`SettingsView` shows one page at a time), Back up prikey,
+  then First FCH and Logs, which have no tile.
 - Not ported, on purpose: the SSH terminal and Release Sync (both run
   subprocesses, which iOS does not allow) and the menu-bar item.
 
@@ -35,6 +42,8 @@ from the Mac's Swift code and laid out like the Android app.
 - A window-sized `.frame(width: 560)` → `.sheetFrame(...)` with the same
   arguments. A pane toolbar's `HStack` → `FlowRow`, which wraps.
 - `.buttonStyle(.link)` → `.borderless`; `.toggleStyle(.checkbox)` → `.checkmark`.
+- A segmented `Picker` with more or longer labels than a phone's width holds
+  (the Convert and Tools panes) → `ChoiceChips`, which wraps.
 
 ## Phone layout: buttons at the bottom
 
@@ -52,6 +61,9 @@ avatar), which keep their own Done.
   round and filled with the accent colour (grey when disabled). A `Label`
   there shows its icon only. Don't give a button there a style of its own. Actions that are unusual or cannot be undone keep their words
   (a `Text` with `.frame(minHeight: 30)` to match the icons' height).
+- Convert and Tools hold several forms in one pane. Each form names its
+  buttons with `.toolBarActions([...])`, Clear first and the operation last,
+  and the pane draws them with `.toolBottomBar()` (`ToolFormControls.swift`).
 - A sheet with a bottom bar uses `sheetFrame(width:height:)`, so its own
   scroller is the only one and the bar stays put.
 - The live identity at the right of every pane's title bar is
@@ -99,8 +111,8 @@ Deliberately not taken: larger controls (`d9338b7`).
     tools/walkthrough.sh <simulator-udid> <shots-dir>
 
 The walkthrough is a UI test that makes a vault and an identity, opens every
-home tile and saves a screenshot of each — the way to see a layout change on
-a phone. Run it after touching a pane. `testChineseScreens` does a shorter
+home tile and settings-menu row and saves a screenshot of each — the way to see a layout change on
+a phone. Run it after touching a pane. `testWorkbenchBars` presses the Convert and Tools bars. `testChineseScreens` does a shorter
 pass in Chinese, and `testBottomBarScreens` opens a few panes and a sheet
 from each, backing out with the bars' own Back (pass either as
 the fourth argument, after a derived-data dir, as

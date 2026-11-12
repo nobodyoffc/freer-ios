@@ -31,11 +31,7 @@ struct ToolsView: View {
             PaneHeader(session: session)
             Divider()
 
-            Picker("Tool", selection: $tool) {
-                ForEach(Tool.allCases) { Text($0.rawValue).tag($0) }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
+            ChoiceChips("Tool", selection: $tool)
 
             ScrollView {
                 Group {
@@ -59,7 +55,7 @@ struct ToolsView: View {
         }
         .padding()
         .sheetFrame(minWidth: 480)
-        .bottomBar()
+        .toolBottomBar()
     }
 }
 
@@ -68,7 +64,8 @@ struct ToolsView: View {
 // `ToolTextEditor`, `ToolResultTable` and `errorText` live in
 // ToolFormControls.swift, shared with ConvertView.
 
-/// Result block: monospaced, click-to-copy, hidden until non-empty.
+/// Result block: monospaced, hidden until non-empty. A tap on the text
+/// copies it; the buttons beside the label say so, and add the QR code.
 private struct ToolResult: View {
     let label: String
     let text: String
@@ -76,7 +73,11 @@ private struct ToolResult: View {
     var body: some View {
         if !text.isEmpty {
             VStack(alignment: .leading, spacing: 4) {
-                Text(label).font(.caption).foregroundStyle(.secondary)
+                HStack(spacing: 6) {
+                    Text(label).font(.caption).foregroundStyle(.secondary)
+                    Spacer(minLength: 0)
+                    ToolValueActions(label: label, value: text)
+                }
                 ScrollView(.horizontal) {
                     CopyableText(text, font: .system(.body, design: .monospaced))
                 }
@@ -115,30 +116,25 @@ private struct EncryptToolView: View {
             ToolTextEditor(placeholder: String(localized: "Text to be encrypted"), text: $text)
             Toggle("Treat text as hex bytes", isOn: $hexAsBytes)
 
-            Picker("Key type", selection: $mode) {
-                ForEach(KeyMode.allCases) { Text($0.rawValue).tag($0) }
-            }
-            .pickerStyle(.segmented)
+            ChoiceChips("Key type", selection: $mode)
 
             TextField(keyHint, text: $key)
                 .fieldInputStyle()
                 .font(.system(.body, design: .monospaced))
-
-            HStack {
-                Button("Encrypt", action: encrypt)
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(text.isEmpty || key.isEmpty)
-                Button("Clear") {
-                    text = ""; key = ""; result = ""; error = nil
-                    hexAsBytes = false; mode = .password
-                }
-            }
 
             if let error {
                 CopyableText(error, font: .caption).foregroundStyle(.red)
             }
             ToolResult(label: String(localized: "Cipher (CryptoDataStr JSON)"), text: result)
         }
+        // In the pane's bottom bar: Clear first, the operation under the thumb.
+        .toolBarActions([
+            ToolBarAction(String(localized: "Clear"), systemImage: "xmark") {
+                text = ""; key = ""; result = ""; error = nil
+                hexAsBytes = false; mode = .password
+            },
+            ToolBarAction(String(localized: "Encrypt"), systemImage: "lock", disabled: text.isEmpty || key.isEmpty, action: encrypt),
+        ])
     }
 
     private var keyHint: String {
@@ -219,20 +215,18 @@ private struct DecryptToolView: View {
             }
             Toggle("Show result as hex", isOn: $toHex)
 
-            HStack {
-                Button("Decrypt", action: decrypt)
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(cipher.isEmpty)
-                Button("Clear") {
-                    cipher = ""; key = ""; result = ""; error = nil; toHex = false
-                }
-            }
-
             if let error {
                 CopyableText(error, font: .caption).foregroundStyle(.red)
             }
             ToolResult(label: String(localized: "Plaintext"), text: result)
         }
+        // In the pane's bottom bar: Clear first, the operation under the thumb.
+        .toolBarActions([
+            ToolBarAction(String(localized: "Clear"), systemImage: "xmark") {
+                cipher = ""; key = ""; result = ""; error = nil; toHex = false
+            },
+            ToolBarAction(String(localized: "Decrypt"), systemImage: "lock.open", disabled: cipher.isEmpty, action: decrypt),
+        ])
     }
 
     private func decrypt() {
@@ -336,12 +330,11 @@ private struct SignToolView: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
 
-            Picker("Algorithm", selection: $alg) {
-                Text("ECDSA").tag(MsgSignature.Alg.ecdsa)
-                Text("Schnorr").tag(MsgSignature.Alg.schnorr)
-                Text("Symkey").tag(MsgSignature.Alg.symkey)
-            }
-            .pickerStyle(.segmented)
+            ChoiceChips("Algorithm", selection: $alg, options: [
+                (MsgSignature.Alg.ecdsa, String(localized: "ECDSA")),
+                (MsgSignature.Alg.schnorr, String(localized: "Schnorr")),
+                (MsgSignature.Alg.symkey, String(localized: "Symkey")),
+            ])
 
             if alg == .symkey {
                 TextField("Symkey — 32 bytes in hex", text: $symkeyHex)
@@ -351,16 +344,6 @@ private struct SignToolView: View {
                 CopyableLabel(String(localized: "Watch-only — the live FID has no prikey to sign with"), systemImage: "eye")
                     .font(.caption)
                     .foregroundStyle(.orange)
-            }
-
-            HStack {
-                Button(file == nil ? "Sign" : "Sign and Save", action: sign)
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(message.isEmpty || (alg != .symkey && !session.canSign))
-                Button("Clear") {
-                    message = ""; symkeyHex = ""; result = ""; error = nil; alg = .ecdsa
-                    file = nil; savedTo = nil
-                }
             }
 
             if let error {
@@ -378,6 +361,14 @@ private struct SignToolView: View {
             }
             ToolResult(label: String(localized: "Signature JSON"), text: result)
         }
+        // In the pane's bottom bar: Clear first, the operation under the thumb.
+        .toolBarActions([
+            ToolBarAction(String(localized: "Clear"), systemImage: "xmark") {
+                message = ""; symkeyHex = ""; result = ""; error = nil; alg = .ecdsa
+                file = nil; savedTo = nil
+            },
+            ToolBarAction(file == nil ? String(localized: "Sign") : String(localized: "Sign and Save"), systemImage: "signature", disabled: message.isEmpty || (alg != .symkey && !session.canSign), action: sign),
+        ])
         .alert("Replace \(replacing?.lastPathComponent ?? "")?", isPresented: Binding(
             get: { replacing != nil }, set: { if !$0 { replacing = nil } })) {
             Button("Replace", role: .destructive) {
@@ -486,20 +477,12 @@ private struct VerifyToolView: View {
                 .fieldInputStyle()
                 .font(.system(.body, design: .monospaced))
 
-            HStack {
-                Button("Verify", action: verify)
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(signatureJson.isEmpty)
-                Button("Clear") {
-                    signatureJson = ""; key = ""; verdict = nil; error = nil
-                }
-                if let verdict {
-                    Label(
-                        verdict ? "Valid" : "Invalid",
-                        systemImage: verdict ? "checkmark.seal.fill" : "xmark.seal.fill"
-                    )
-                    .foregroundStyle(verdict ? .green : .red)
-                }
+            if let verdict {
+                Label(
+                    verdict ? "Valid" : "Invalid",
+                    systemImage: verdict ? "checkmark.seal.fill" : "xmark.seal.fill"
+                )
+                .foregroundStyle(verdict ? .green : .red)
             }
 
             if verdict == true, let signer {
@@ -510,6 +493,13 @@ private struct VerifyToolView: View {
                 CopyableText(error, font: .caption).foregroundStyle(.red)
             }
         }
+        // In the pane's bottom bar: Clear first, the operation under the thumb.
+        .toolBarActions([
+            ToolBarAction(String(localized: "Clear"), systemImage: "xmark") {
+                signatureJson = ""; key = ""; verdict = nil; error = nil
+            },
+            ToolBarAction(String(localized: "Verify"), systemImage: "checkmark.seal", disabled: signatureJson.isEmpty, action: verify),
+        ])
     }
 
     private func verify() {
@@ -590,27 +580,23 @@ private struct HashToolView: View {
                 }
             }
 
-            Picker("Algorithm", selection: $algorithm) {
-                ForEach(Algorithm.allCases) { Text($0.rawValue).tag($0) }
-            }
-            .pickerStyle(.segmented)
+            ChoiceChips("Algorithm", selection: $algorithm)
 
-            HStack {
-                Button("Hash", action: hash)
-                    .keyboardShortcut(.defaultAction)
-                    .disabled((text.isEmpty && fileData == nil) || hashing)
-                if hashing { ProgressView().controlSize(.small) }
-                Button("Clear") {
-                    text = ""; result = ""; error = nil
-                    asHex = false; fileName = nil; fileData = nil
-                }
-            }
+            if hashing { ProgressView().controlSize(.small) }
 
             if let error {
                 CopyableText(error, font: .caption).foregroundStyle(.red)
             }
             ToolResult(label: String(localized: "Digest (hex)"), text: result)
         }
+        // In the pane's bottom bar: Clear first, the operation under the thumb.
+        .toolBarActions([
+            ToolBarAction(String(localized: "Clear"), systemImage: "xmark") {
+                text = ""; result = ""; error = nil
+                asHex = false; fileName = nil; fileData = nil
+            },
+            ToolBarAction(String(localized: "Hash"), systemImage: "number", disabled: (text.isEmpty && fileData == nil) || hashing, action: hash),
+        ])
     }
 
     private func pickFile() {
@@ -700,22 +686,20 @@ private struct RandomToolView: View {
                 }
             }
 
-            Picker("Format", selection: $format) {
-                ForEach(Format.allCases) { Text($0.rawValue).tag($0) }
-            }
-            .pickerStyle(.segmented)
-
-            HStack {
-                Button("New", action: generate)
-                    .keyboardShortcut(.defaultAction)
-                Button("Clear") { result = ""; error = nil; countText = "32" }
-            }
+            ChoiceChips("Format", selection: $format)
 
             if let error {
                 CopyableText(error, font: .caption).foregroundStyle(.red)
             }
             ToolResult(label: String(localized: "Random value"), text: result)
         }
+        // In the pane's bottom bar: Clear first, the operation under the thumb.
+        .toolBarActions([
+            ToolBarAction(String(localized: "Clear"), systemImage: "xmark") {
+                result = ""; error = nil; countText = "32"
+            },
+            ToolBarAction(String(localized: "New"), systemImage: "dice", action: generate),
+        ])
     }
 
     private func generate() {

@@ -79,7 +79,9 @@ struct MessageComposerView: View {
                 if recorder.isActive {
                     recordingBar
                 } else {
-                    textComposer
+                    // Send, emoji and attach are pressed mid-typing: a
+                    // tap on them leaves the keyboard where it is.
+                    textComposer.keepsKeyboard()
                 }
             }
 
