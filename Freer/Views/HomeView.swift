@@ -110,12 +110,18 @@ struct HomeView: View {
                             Text(pane.title)
                                 .font(.title3.weight(.semibold))
                                 .lineLimit(1)
+                                // Its own width, whatever the bar would
+                                // rather give it: the identity chip is
+                                // the one that gives way.
+                                .fixedSize()
                                 .accessibilityAddTraits(.isHeader)
                         }
+                        .plainToolbarItem()
                         ToolbarItem(placement: .principal) { Text("") }
                         ToolbarItem(placement: .topBarTrailing) {
                             LiveIdentityChip(session: session) { path = [] }
                         }
+                        .plainToolbarItem()
                     }
             }
         }

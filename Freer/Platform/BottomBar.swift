@@ -38,8 +38,18 @@ extension View {
 
 private struct BottomBar<Actions: View>: ViewModifier {
     @Environment(\.dismiss) private var dismiss
+    @State private var bottomInset: CGFloat = 0
     let back: (() -> Void)?
     let actions: () -> Actions
+
+    /// The space under the buttons. On a phone with a home indicator the
+    /// system keeps 34 points clear below the bar, most of it empty: the
+    /// buttons move down into it, stopping short of the indicator itself.
+    /// With no indicator, or with the keyboard up (an inset far larger
+    /// than any indicator's), they keep a margin of their own.
+    private var bottomPadding: CGFloat {
+        bottomInset > 0 && bottomInset <= 50 ? -min(14, bottomInset - 20) : 6
+    }
 
     func body(content: Content) -> some View {
         content
@@ -59,10 +69,14 @@ private struct BottomBar<Actions: View>: ViewModifier {
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
                     .padding(.horizontal, 16)
-                    .padding(.vertical, 8)
+                    .padding(.top, 6)
+                    .padding(.bottom, bottomPadding)
                 }
                 .background(.bar)
             }
+            // Measured outside the bar, so it is the screen's own inset
+            // and not one the bar added.
+            .onGeometryChange(for: CGFloat.self) { $0.safeAreaInsets.bottom } action: { bottomInset = $0 }
             .navigationBarBackButtonHidden(true)
             .background(EdgeSwipeBack())
     }
@@ -97,8 +111,8 @@ struct RoundFilledButtonStyle: ButtonStyle {
             .foregroundStyle(.white)
             .tint(.white)
             .padding(.horizontal, 12)
-            .padding(.vertical, 7)
-            .frame(minWidth: 44, minHeight: 44)
+            .padding(.vertical, 5)
+            .frame(minWidth: 40, minHeight: 40)
             // `.tint`, not the accent colour outright: a button that asks
             // for green or red (Rate good, Rate bad) still gets it.
             .background(isEnabled ? AnyShapeStyle(.tint) : AnyShapeStyle(Color(uiColor: .systemGray3)), in: Capsule())
