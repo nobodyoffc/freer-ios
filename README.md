@@ -13,10 +13,10 @@ live network. Sending, chat, calls and the file flows have not been tested yet.
 
 The app's logic — cryptography, transactions, transport, storage, the protocols — is
 not in this repository. It lives in the Mac repo's Swift packages, which this project
-references by path. Check the two out side by side:
+references by path. Check the two out like this:
 
-    MacApp/FreerForMac/     https://github.com/nobodyoffc/freer-mac
-    iosapp/                 this repository
+    MacApp/FreerForMac/         https://github.com/nobodyoffc/freer-mac
+    iosapp/freerforios/         this repository
 
 Then open `Freer.xcodeproj` in Xcode (16 or later) and run on an iOS 17+ simulator,
 or run `tools/build.sh`.

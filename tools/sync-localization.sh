@@ -9,7 +9,7 @@
 # Mac" reworded as "this device" in keys and values.
 set -eu
 cd "$(dirname "$0")/.."
-MAC="${1:-../MacApp/FreerForMac}"
+MAC="${1:-../../MacApp/FreerForMac}"
 SRC="$MAC/Sources/FreerForMac/Localization/zh-Hans.lproj/Localizable.strings"
 OUT="Freer/Localization/zh-Hans.lproj/Localizable.strings"
 MARK='/* ---- from the Mac app'"'"'s table ---- */'

@@ -8,9 +8,9 @@ from the Mac's Swift code and laid out like the Android app.
 
 - **Logic is not in this folder.** `FCCore`, `FCTransport`, `FCStorage`,
   `FCDomain`, `FCUI` and `FCVoice` are the Mac repo's packages, referenced by
-  path (`../MacApp/FreerForMac/Packages/*`). A fix to the wallet, a protocol or
+  path (`../../MacApp/FreerForMac/Packages/*`). A fix to the wallet, a protocol or
   the transport is made there and reaches both apps. The Mac repo must sit
-  beside this one for the project to build.
+  beside this one's parent folder (`~/iosapp`) for the project to build.
 - **`Freer/`** is the app: a copy of the Mac's `Sources/FreerForMac`
   (`Config/mac-source-revision.txt` records the commit it was taken from),
   adapted for iOS. It is a fork, not a reference: a change to a Mac view has to

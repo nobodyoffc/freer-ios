@@ -177,12 +177,12 @@
 			mainGroup = F0000000000000000000A020;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				F0000000000000000000D101 /* XCLocalSwiftPackageReference "../MacApp/FreerForMac/Packages/FCCore" */,
-				F0000000000000000000D102 /* XCLocalSwiftPackageReference "../MacApp/FreerForMac/Packages/FCTransport" */,
-				F0000000000000000000D103 /* XCLocalSwiftPackageReference "../MacApp/FreerForMac/Packages/FCStorage" */,
-				F0000000000000000000D104 /* XCLocalSwiftPackageReference "../MacApp/FreerForMac/Packages/FCDomain" */,
-				F0000000000000000000D105 /* XCLocalSwiftPackageReference "../MacApp/FreerForMac/Packages/FCUI" */,
-				F0000000000000000000D106 /* XCLocalSwiftPackageReference "../MacApp/FreerForMac/Packages/FCVoice" */,
+				F0000000000000000000D101 /* XCLocalSwiftPackageReference "../../MacApp/FreerForMac/Packages/FCCore" */,
+				F0000000000000000000D102 /* XCLocalSwiftPackageReference "../../MacApp/FreerForMac/Packages/FCTransport" */,
+				F0000000000000000000D103 /* XCLocalSwiftPackageReference "../../MacApp/FreerForMac/Packages/FCStorage" */,
+				F0000000000000000000D104 /* XCLocalSwiftPackageReference "../../MacApp/FreerForMac/Packages/FCDomain" */,
+				F0000000000000000000D105 /* XCLocalSwiftPackageReference "../../MacApp/FreerForMac/Packages/FCUI" */,
+				F0000000000000000000D106 /* XCLocalSwiftPackageReference "../../MacApp/FreerForMac/Packages/FCVoice" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = F0000000000000000000A021 /* Products */;
@@ -412,29 +412,29 @@
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
-		F0000000000000000000D101 /* XCLocalSwiftPackageReference "../MacApp/FreerForMac/Packages/FCCore" */ = {
+		F0000000000000000000D101 /* XCLocalSwiftPackageReference "../../MacApp/FreerForMac/Packages/FCCore" */ = {
 			isa = XCLocalSwiftPackageReference;
-			relativePath = ../MacApp/FreerForMac/Packages/FCCore;
+			relativePath = ../../MacApp/FreerForMac/Packages/FCCore;
 		};
-		F0000000000000000000D102 /* XCLocalSwiftPackageReference "../MacApp/FreerForMac/Packages/FCTransport" */ = {
+		F0000000000000000000D102 /* XCLocalSwiftPackageReference "../../MacApp/FreerForMac/Packages/FCTransport" */ = {
 			isa = XCLocalSwiftPackageReference;
-			relativePath = ../MacApp/FreerForMac/Packages/FCTransport;
+			relativePath = ../../MacApp/FreerForMac/Packages/FCTransport;
 		};
-		F0000000000000000000D103 /* XCLocalSwiftPackageReference "../MacApp/FreerForMac/Packages/FCStorage" */ = {
+		F0000000000000000000D103 /* XCLocalSwiftPackageReference "../../MacApp/FreerForMac/Packages/FCStorage" */ = {
 			isa = XCLocalSwiftPackageReference;
-			relativePath = ../MacApp/FreerForMac/Packages/FCStorage;
+			relativePath = ../../MacApp/FreerForMac/Packages/FCStorage;
 		};
-		F0000000000000000000D104 /* XCLocalSwiftPackageReference "../MacApp/FreerForMac/Packages/FCDomain" */ = {
+		F0000000000000000000D104 /* XCLocalSwiftPackageReference "../../MacApp/FreerForMac/Packages/FCDomain" */ = {
 			isa = XCLocalSwiftPackageReference;
-			relativePath = ../MacApp/FreerForMac/Packages/FCDomain;
+			relativePath = ../../MacApp/FreerForMac/Packages/FCDomain;
 		};
-		F0000000000000000000D105 /* XCLocalSwiftPackageReference "../MacApp/FreerForMac/Packages/FCUI" */ = {
+		F0000000000000000000D105 /* XCLocalSwiftPackageReference "../../MacApp/FreerForMac/Packages/FCUI" */ = {
 			isa = XCLocalSwiftPackageReference;
-			relativePath = ../MacApp/FreerForMac/Packages/FCUI;
+			relativePath = ../../MacApp/FreerForMac/Packages/FCUI;
 		};
-		F0000000000000000000D106 /* XCLocalSwiftPackageReference "../MacApp/FreerForMac/Packages/FCVoice" */ = {
+		F0000000000000000000D106 /* XCLocalSwiftPackageReference "../../MacApp/FreerForMac/Packages/FCVoice" */ = {
 			isa = XCLocalSwiftPackageReference;
-			relativePath = ../MacApp/FreerForMac/Packages/FCVoice;
+			relativePath = ../../MacApp/FreerForMac/Packages/FCVoice;
 		};
 /* End XCLocalSwiftPackageReference section */
 
