@@ -1,40 +1,16 @@
 import SwiftUI
 import FCUI
 
-/// The QR workbench as a modal, opened from the toolbar `qrcode`
-/// button (⌘K) — the Mac counterpart of Android's `QrCodeActivity`.
-/// Scan with the camera or from image files (each code appends, so
-/// payloads split across several codes merge back together), edit the
-/// content freely, and render it as QR codes (long content is chunked
-/// across several).
+/// The QR page as a modal, opened from the toolbar `qrcode` button —
+/// Android's `QrCodeActivity`: scan with the camera or from pictures
+/// (each code appends, so payloads split across several codes merge back
+/// together), edit the content, and render it as QR codes.
 struct QrToolSheet: View {
     let onDone: () -> Void
 
-    @State private var content: String = ""
-
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Image(systemName: "qrcode").font(.title2)
-                Text("QR workbench").font(.title3).bold()
-                Spacer()
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
-
-            Divider()
-
-            VStack(alignment: .leading, spacing: 10) {
-                QrWorkbenchView(content: $content)
-
-                Text("Long content is split into \(QrCoder.defaultCapacity)-byte QR codes; scanning appends each code, so multi-part payloads from the Android app reassemble here (and vice versa).")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .padding(16)
+        NavigationStack {
+            QrPage(title: String(localized: "QR workbench"), onCancel: onDone)
         }
-        .sheetFrame(minWidth: 560)
-        .bottomBar(back: { onDone() })
     }
 }
