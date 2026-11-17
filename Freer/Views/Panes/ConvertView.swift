@@ -86,7 +86,7 @@ private struct ScriptConvertView: View {
             ToolBarAction(String(localized: "Clear"), systemImage: "xmark") {
                 input = ""; result = ""; error = nil
             },
-            ToolBarAction(String(localized: "Convert"), systemImage: "arrow.left.arrow.right", disabled: input.trimmed.isEmpty, action: convert),
+            ToolBarAction(String(localized: "Convert"), systemImage: "play.fill", disabled: input.trimmed.isEmpty, action: convert),
         ])
     }
 
@@ -164,7 +164,7 @@ private struct PrikeyConvertView: View {
             ToolBarAction(String(localized: "Clear"), systemImage: "xmark") {
                 input = ""; result = ""; error = nil
             },
-            ToolBarAction(String(localized: "Convert"), systemImage: "arrow.left.arrow.right", disabled: input.trimmed.isEmpty, action: convert),
+            ToolBarAction(String(localized: "Convert"), systemImage: "play.fill", disabled: input.trimmed.isEmpty, action: convert),
         ])
     }
 
@@ -230,7 +230,7 @@ private struct PubkeyConvertView: View {
             ToolBarAction(String(localized: "Clear"), systemImage: "xmark") {
                 input = ""; rows = []; error = nil
             },
-            ToolBarAction(String(localized: "Convert"), systemImage: "arrow.left.arrow.right", disabled: input.trimmed.isEmpty, action: convert),
+            ToolBarAction(String(localized: "Convert"), systemImage: "play.fill", disabled: input.trimmed.isEmpty, action: convert),
         ])
     }
 
@@ -300,7 +300,7 @@ private struct AddressConvertView: View {
             ToolBarAction(String(localized: "Clear"), systemImage: "xmark") {
                 input = ""; rows = []; note = nil; error = nil
             },
-            ToolBarAction(String(localized: "Convert"), systemImage: "arrow.left.arrow.right", disabled: input.trimmed.isEmpty, action: convert),
+            ToolBarAction(String(localized: "Convert"), systemImage: "play.fill", disabled: input.trimmed.isEmpty, action: convert),
         ])
     }
 
@@ -358,7 +358,7 @@ private struct JsonConvertView: View {
             ToolBarAction(String(localized: "Clear"), systemImage: "xmark") {
                 input = ""; result = ""; error = nil
             },
-            ToolBarAction(String(localized: "Convert"), systemImage: "arrow.left.arrow.right", disabled: input.trimmed.isEmpty, action: convert),
+            ToolBarAction(String(localized: "Convert"), systemImage: "play.fill", disabled: input.trimmed.isEmpty, action: convert),
         ])
     }
 
@@ -411,7 +411,7 @@ private struct StringConvertView: View {
             ToolBarAction(String(localized: "Clear"), systemImage: "xmark") {
                 input = ""; rows = []; detected = nil; error = nil
             },
-            ToolBarAction(String(localized: "Decode"), systemImage: "arrow.left.arrow.right", disabled: input.trimmed.isEmpty, action: decode),
+            ToolBarAction(String(localized: "Decode"), systemImage: "play.fill", disabled: input.trimmed.isEmpty, action: decode),
         ])
     }
 
@@ -510,7 +510,7 @@ private struct TimeConvertView: View {
                 error = nil
                 syncing = false
             },
-            ToolBarAction(String(localized: "Now"), systemImage: "clock") {
+            ToolBarAction(String(localized: "Now"), systemImage: "play.fill") {
                 sync(from: .millis, value: String(nowMillis()))
             },
         ])

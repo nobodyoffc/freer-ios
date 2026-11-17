@@ -121,6 +121,8 @@ private struct EncryptToolView: View {
             TextField(keyHint, text: $key)
                 .fieldInputStyle()
                 .font(.system(.body, design: .monospaced))
+                .autocorrectionDisabled()
+                .textInputAutocapitalization(.never)
 
             if let error {
                 CopyableText(error, font: .caption).foregroundStyle(.red)
@@ -133,7 +135,7 @@ private struct EncryptToolView: View {
                 text = ""; key = ""; result = ""; error = nil
                 hexAsBytes = false; mode = .password
             },
-            ToolBarAction(String(localized: "Encrypt"), systemImage: "lock", disabled: text.isEmpty || key.isEmpty, action: encrypt),
+            ToolBarAction(String(localized: "Encrypt"), systemImage: "play.fill", disabled: text.isEmpty || key.isEmpty, action: encrypt),
         ])
     }
 
@@ -225,7 +227,7 @@ private struct DecryptToolView: View {
             ToolBarAction(String(localized: "Clear"), systemImage: "xmark") {
                 cipher = ""; key = ""; result = ""; error = nil; toHex = false
             },
-            ToolBarAction(String(localized: "Decrypt"), systemImage: "lock.open", disabled: cipher.isEmpty, action: decrypt),
+            ToolBarAction(String(localized: "Decrypt"), systemImage: "play.fill", disabled: cipher.isEmpty, action: decrypt),
         ])
     }
 
@@ -367,7 +369,7 @@ private struct SignToolView: View {
                 message = ""; symkeyHex = ""; result = ""; error = nil; alg = .ecdsa
                 file = nil; savedTo = nil
             },
-            ToolBarAction(file == nil ? String(localized: "Sign") : String(localized: "Sign and Save"), systemImage: "signature", disabled: message.isEmpty || (alg != .symkey && !session.canSign), action: sign),
+            ToolBarAction(file == nil ? String(localized: "Sign") : String(localized: "Sign and Save"), systemImage: "play.fill", disabled: message.isEmpty || (alg != .symkey && !session.canSign), action: sign),
         ])
         .alert("Replace \(replacing?.lastPathComponent ?? "")?", isPresented: Binding(
             get: { replacing != nil }, set: { if !$0 { replacing = nil } })) {
@@ -498,7 +500,7 @@ private struct VerifyToolView: View {
             ToolBarAction(String(localized: "Clear"), systemImage: "xmark") {
                 signatureJson = ""; key = ""; verdict = nil; error = nil
             },
-            ToolBarAction(String(localized: "Verify"), systemImage: "checkmark.seal", disabled: signatureJson.isEmpty, action: verify),
+            ToolBarAction(String(localized: "Verify"), systemImage: "play.fill", disabled: signatureJson.isEmpty, action: verify),
         ])
     }
 
@@ -595,7 +597,7 @@ private struct HashToolView: View {
                 text = ""; result = ""; error = nil
                 asHex = false; fileName = nil; fileData = nil
             },
-            ToolBarAction(String(localized: "Hash"), systemImage: "number", disabled: (text.isEmpty && fileData == nil) || hashing, action: hash),
+            ToolBarAction(String(localized: "Hash"), systemImage: "play.fill", disabled: (text.isEmpty && fileData == nil) || hashing, action: hash),
         ])
     }
 
@@ -698,7 +700,7 @@ private struct RandomToolView: View {
             ToolBarAction(String(localized: "Clear"), systemImage: "xmark") {
                 result = ""; error = nil; countText = "32"
             },
-            ToolBarAction(String(localized: "New"), systemImage: "dice", action: generate),
+            ToolBarAction(String(localized: "New"), systemImage: "play.fill", action: generate),
         ])
     }
 
