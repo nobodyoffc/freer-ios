@@ -55,6 +55,8 @@ avatar), which keep their own Done.
 - A screen's actions go in `.bottomBar { … }` (`Platform/BottomBar.swift`), in
   Android's order: more, secondary, primary, then Back, which the bar adds
   itself. A sheet passes what its Cancel/Close did: `.bottomBar(back:) { … }`.
+  A More menu can go in `.bottomBar(more: { … }) { … }`, which puts it first
+  of the buttons.
   Sort, filter and search stay at the top. The bar must be applied outside the
   pane's `.padding()`, or it stops short of the screen's edges.
 - Buttons in the bar, and in rows marked `.roundButtons()`, are Android's:

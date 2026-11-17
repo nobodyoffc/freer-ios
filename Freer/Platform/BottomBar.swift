@@ -12,18 +12,27 @@ import UIKit
 // the furthest point on the screen from that thumb.
 //
 // Back is always the last button, so the thumb learns one place for
-// "leave this screen" whether the screen was pushed or presented.
+// "leave this screen" whether the screen was pushed or presented. More,
+// when a screen has one, is always the first of the buttons.
 extension View {
+
+    /// A pane's bottom bar with a More menu first, before `actions`.
+    func bottomBar<More: View, Actions: View>(
+        @ViewBuilder more: @escaping () -> More,
+        @ViewBuilder _ actions: @escaping () -> Actions
+    ) -> some View {
+        modifier(BottomBar(back: nil, more: more, actions: actions))
+    }
 
     /// A pane's bottom bar: `actions`, then Back. Takes the system Back
     /// button off the title bar; the swipe from the left edge stays.
     func bottomBar<Actions: View>(@ViewBuilder _ actions: @escaping () -> Actions) -> some View {
-        modifier(BottomBar(back: nil, actions: actions))
+        modifier(BottomBar(back: nil, more: { EmptyView() }, actions: actions))
     }
 
     /// A screen with nothing to do but leave.
     func bottomBar(back: (() -> Void)? = nil) -> some View {
-        modifier(BottomBar(back: back, actions: { EmptyView() }))
+        modifier(BottomBar(back: back, more: { EmptyView() }, actions: { EmptyView() }))
     }
 
     /// A sheet's bottom bar. `back` is what its Cancel, Close or Later
@@ -32,14 +41,15 @@ extension View {
         back: (() -> Void)?,
         @ViewBuilder _ actions: @escaping () -> Actions
     ) -> some View {
-        modifier(BottomBar(back: back, actions: actions))
+        modifier(BottomBar(back: back, more: { EmptyView() }, actions: actions))
     }
 }
 
-private struct BottomBar<Actions: View>: ViewModifier {
+private struct BottomBar<More: View, Actions: View>: ViewModifier {
     @Environment(\.dismiss) private var dismiss
     @State private var bottomInset: CGFloat = 0
     let back: (() -> Void)?
+    let more: () -> More
     let actions: () -> Actions
 
     /// The space under the buttons. On a phone with a home indicator the
@@ -58,6 +68,7 @@ private struct BottomBar<Actions: View>: ViewModifier {
                     Divider()
                     HStack(spacing: 8) {
                         Spacer(minLength: 0)
+                        more()
                         actions()
                         Button {
                             if let back { back() } else { dismiss() }
