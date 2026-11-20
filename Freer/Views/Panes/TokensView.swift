@@ -531,7 +531,11 @@ struct TokensView: View {
                     }
                 }
 
-                HStack(spacing: 8) {
+                // Icons alone, at the right end: the row is a phone's
+                // width and the words would wrap it.
+                HStack(spacing: 14) {
+                    Spacer(minLength: 0)
+                    if busy { ProgressView().controlSize(.small) }
                     if let token {
                         Button {
                             sending = SendTarget(holder: holder, token: token)
@@ -550,8 +554,10 @@ struct TokensView: View {
                         .controlSize(.small)
 
                         if holder.hasBalance && session.canSign {
-                            Button("Burn…", role: .destructive) { pendingDestroy = holder }
-                                .controlSize(.small)
+                            Button(role: .destructive) { pendingDestroy = holder } label: {
+                                Label("Burn…", systemImage: "flame")
+                            }
+                            .controlSize(.small)
                                 .disabled(busy)
                                 .help("Destroy your whole balance of this token. There is no partial burn.")
                         }
@@ -559,8 +565,9 @@ struct TokensView: View {
                     hideButton(id: holder.id, isHidden: hiddenHolderIds.contains(holder.id)) {
                         toggleHiddenHolder(holder.id)
                     }
-                    if busy { ProgressView().controlSize(.small) }
                 }
+                .labelStyle(.iconOnly)
+                .imageScale(.large)
                 .padding(.top, 2)
             }
         }
@@ -639,7 +646,9 @@ struct TokensView: View {
                     }
                 }
 
-                HStack(spacing: 8) {
+                HStack(spacing: 14) {
+                    Spacer(minLength: 0)
+                    if busy { ProgressView().controlSize(.small) }
                     if token.canIssue(as: session.liveFid) {
                         Button {
                             issuing = token
@@ -665,8 +674,9 @@ struct TokensView: View {
                     hideButton(id: token.id, isHidden: hiddenTokenIds.contains(token.id)) {
                         toggleHiddenToken(token.id)
                     }
-                    if busy { ProgressView().controlSize(.small) }
                 }
+                .labelStyle(.iconOnly)
+                .imageScale(.large)
                 .padding(.top, 2)
             }
         }
