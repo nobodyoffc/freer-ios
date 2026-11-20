@@ -806,14 +806,16 @@ struct TokenDetailSheet: View {
                 case .history: historyView
                 }
             }
-            .frame(minHeight: 260, maxHeight: 340)
+            // The tab's scroller takes the rest of the sheet, down to
+            // the bar; capped at the Mac's 340 it left half a phone blank.
+            .frame(minHeight: 260, maxHeight: .infinity)
 
             if let error {
                 CopyableText(error, font: .caption).foregroundStyle(.red)
             }
         }
         .padding(20)
-        .sheetFrame(width: 560)
+        .sheetFrame(width: 560, height: 520)
         .bottomBar(back: { onClose() }) {
             if loading { ProgressView().controlSize(.small) }
         }

@@ -95,10 +95,17 @@ struct CashReorgSheet: View {
         VStack(alignment: .leading, spacing: 0) {
             header
             Divider()
-            ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
+            // One scroller, the form's own, filling the sheet down to
+            // the bar. A Form nested in a ScrollView has to be given a
+            // fixed height, and on a phone that left the lower half blank.
+            Form {
+                Section {
                     spending
-                    form
+                        .listRowInsets(EdgeInsets())
+                        .listRowBackground(Color.clear)
+                }
+                formSections
+                Section {
                     preview
                     if let actionError {
                         CopyableText(actionError, font: .caption)
@@ -106,8 +113,10 @@ struct CashReorgSheet: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
-                .padding(16)
+                .listRowBackground(Color.clear)
+                .listRowInsets(EdgeInsets())
             }
+            .formStyle(.grouped)
         }
         .sheetFrame(minWidth: 540, minHeight: 480)
         .bottomBar(back: { onDone(.cancelled) }) {
@@ -194,8 +203,8 @@ struct CashReorgSheet: View {
         .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
-    private var form: some View {
-        Form {
+    @ViewBuilder
+    private var formSections: some View {
             Section {
                 LabeledField(
                     String(localized: "How many cashes"),
@@ -239,9 +248,6 @@ struct CashReorgSheet: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-        }
-        .formStyle(.grouped)
-        .frame(minHeight: 240)
     }
 
     private var shapeName: String {
@@ -451,10 +457,17 @@ struct CashSendSheet: View {
         VStack(alignment: .leading, spacing: 0) {
             header
             Divider()
-            ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
+            // One scroller, the form's own, filling the sheet down to
+            // the bar. A Form nested in a ScrollView has to be given a
+            // fixed height, and on a phone that left the lower half blank.
+            Form {
+                Section {
                     spending
-                    form
+                        .listRowInsets(EdgeInsets())
+                        .listRowBackground(Color.clear)
+                }
+                formSections
+                Section {
                     preview
                     if let actionError {
                         CopyableText(actionError, font: .caption)
@@ -462,8 +475,10 @@ struct CashSendSheet: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
-                .padding(16)
+                .listRowBackground(Color.clear)
+                .listRowInsets(EdgeInsets())
             }
+            .formStyle(.grouped)
         }
         .sheetFrame(minWidth: 560, minHeight: 480)
         .bottomBar(back: { onDone(.cancelled) }) {
@@ -559,8 +574,8 @@ struct CashSendSheet: View {
         .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
-    private var form: some View {
-        Form {
+    @ViewBuilder
+    private var formSections: some View {
             Section("To") {
                 LabeledField(
                     String(localized: "Recipient FID"),
@@ -612,9 +627,6 @@ struct CashSendSheet: View {
                     }
                 }
             }
-        }
-        .formStyle(.grouped)
-        .frame(minHeight: 260)
     }
 
     @ViewBuilder
