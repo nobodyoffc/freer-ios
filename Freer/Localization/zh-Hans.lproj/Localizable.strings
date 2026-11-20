@@ -29,6 +29,9 @@
 "Saved %@ images" = "已保存 %@ 张图片";
 "Freer shows the new language the next time it starts. Swipe Freer away in the app switcher, then open it again." = "Freer 下次启动时显示新语言。请在应用切换器中划掉 Freer，然后重新打开。";
 
+"Emoji" = "表情";
+"Share a file" = "分享文件";
+
 /* ---- from the Mac app's table ---- */
 
 /* Simplified Chinese.

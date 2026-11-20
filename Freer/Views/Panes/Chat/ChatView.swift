@@ -1370,7 +1370,7 @@ struct ChatView: View {
                     onSendVoice: { sendVoice(in: conversation) },
                     onCancelRecording: { recorder.cancel() },
                     onGenerateKey: { generateKey(for: conversation) },
-                    callControl: callControl(for: conversation)
+                    call: composerCall(for: conversation)
                 )
             }
         } else {
@@ -1602,7 +1602,7 @@ struct ChatView: View {
 
     /// The phone in the composer: a call in a 1:1 chat; in a Room or Team,
     /// the menu that starts a meeting for everyone or for chosen people.
-    private func callControl(for conversation: Conversation) -> AnyView? {
+    private func composerCall(for conversation: Conversation) -> ComposerCall? {
         let calls = appState.callCenter
         let meetings = appState.meetingCenter
         let busy = (calls.phase != .idle && calls.phase != .ended) || meetings.isActive
@@ -1611,33 +1611,31 @@ struct ChatView: View {
             // Dimmed, not disabled: the known home may be stale, and placing
             // the call reads it fresh from the chain.
             let noCall = calls.knownWithoutCall(conversation.targetId, in: session)
-            return AnyView(
-                Button {
+            return ComposerCall(
+                title: String(localized: "Voice call"),
+                choices: [.init(title: String(localized: "Voice call")) {
                     // A nobody's key is public: calling one asks first (NOBODY_SPEC §3).
                     if names.isNobody(conversation.targetId) { confirmNobodyCall = conversation.targetId }
                     else { calls.placeCall(to: conversation.targetId) }
-                } label: { Image(systemName: "phone") }
-                .buttonStyle(.borderless)
-                .opacity(noCall ? 0.4 : 1)
-                .help(noCall
-                      ? "Voice call — they have no CALL service, so a call cannot ring them. Clicking checks the chain again."
-                      : "Voice call")
-                .disabled(busy)
+                }],
+                help: noCall
+                    ? String(localized: "Voice call — they have no CALL service, so a call cannot ring them. Clicking checks the chain again.")
+                    : String(localized: "Voice call"),
+                dimmed: noCall,
+                disabled: busy
             )
         case .room where conversation.leftGroup != true, .team where conversation.leftGroup != true:
-            return AnyView(
-                Menu {
-                    Button("Everyone in this chat") { startMeeting(in: conversation, invitees: nil) }
+            return ComposerCall(
+                title: String(localized: "Voice meeting"),
+                choices: [
+                    .init(title: String(localized: "Everyone in this chat")) {
+                        startMeeting(in: conversation, invitees: nil)
+                    },
                     // Only them: a key of the meeting's own goes to each alone (Decision 20).
-                    Button("Choose people…") { meetingPicker = conversation }
-                } label: {
-                    Image(systemName: "phone")
-                }
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)
-                .fixedSize()
-                .help("Start a voice meeting")
-                .disabled(busy)
+                    .init(title: String(localized: "Choose people…")) { meetingPicker = conversation },
+                ],
+                help: String(localized: "Start a voice meeting"),
+                disabled: busy
             )
         default:
             return nil

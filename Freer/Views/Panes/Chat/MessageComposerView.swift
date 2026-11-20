@@ -42,10 +42,11 @@ struct MessageComposerView: View {
     let onSendVoice: () -> Void
     let onCancelRecording: () -> Void
     let onGenerateKey: () -> Void
-    /// A voice call (1:1) or the meeting menu (Room, Team), just left of the
-    /// microphone; nil where neither applies.
-    var callControl: AnyView? = nil
+    /// A voice call (1:1) or the meeting choices (Room, Team), just left of
+    /// the microphone; nil where neither applies.
+    var call: ComposerCall? = nil
 
+    @Environment(\.horizontalSizeClass) private var sizeClass
     @State private var showEmoji = false
 
     private var enabled: Bool { verdict.canSend }
@@ -125,33 +126,13 @@ struct MessageComposerView: View {
 
     private var textComposer: some View {
         HStack(spacing: 8) {
-            Button {
-                showEmoji.toggle()
-            } label: {
-                Image(systemName: "face.smiling")
+            if sizeClass == .compact {
+                // A phone has no width to spare beside the text field:
+                // emoji, attach and call go behind one button.
+                moreMenu
+            } else {
+                composerIcons
             }
-            .buttonStyle(.borderless)
-            .disabled(!enabled)
-            .help("Insert an emoji")
-            .popover(isPresented: $showEmoji, arrowEdge: .bottom) {
-                EmojiPicker { emoji in
-                    draft += emoji
-                    showEmoji = false
-                }
-            }
-
-            Button(action: onAttach) {
-                if attaching {
-                    ProgressView().controlSize(.small)
-                } else {
-                    Image(systemName: "paperclip")
-                }
-            }
-            .buttonStyle(.borderless)
-            .disabled(!enabled || attaching)
-            .help("Share a file — it is encrypted, uploaded to DISK, and the message carries the key")
-
-            if let callControl { callControl }
 
             Button(action: onStartRecording) {
                 Image(systemName: "mic")
@@ -167,11 +148,110 @@ struct MessageComposerView: View {
                 .onSubmit(onSend)
 
             Button(action: onSend) {
+                // The icon alone: the word took room from the text field.
                 Label("Send", systemImage: "paperplane.fill")
+                    .labelStyle(.iconOnly)
             }
             .buttonStyle(.borderedProminent)
             .disabled(!enabled || draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         }
+        .popover(isPresented: $showEmoji, arrowEdge: .bottom) {
+            EmojiPicker { emoji in
+                draft += emoji
+                showEmoji = false
+            }
+        }
+    }
+
+    /// The phone's one button for everything that is not typing.
+    private var moreMenu: some View {
+        Menu {
+            Button {
+                showEmoji = true
+            } label: {
+                Label("Emoji", systemImage: "face.smiling")
+            }
+            .disabled(!enabled)
+
+            Button(action: onAttach) {
+                Label("Share a file", systemImage: "paperclip")
+            }
+            .disabled(!enabled || attaching)
+
+            if let call {
+                if call.choices.count == 1, let only = call.choices.first {
+                    Button(action: only.action) {
+                        Label(call.title, systemImage: "phone")
+                    }
+                    .disabled(call.disabled)
+                } else {
+                    Menu {
+                        ForEach(call.choices) { choice in
+                            Button(choice.title, action: choice.action)
+                        }
+                    } label: {
+                        Label(call.title, systemImage: "phone")
+                    }
+                    .disabled(call.disabled)
+                }
+            }
+        } label: {
+            if attaching {
+                ProgressView().controlSize(.small)
+            } else {
+                Image(systemName: "plus.circle")
+            }
+        }
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .accessibilityLabel(Text("More"))
+    }
+
+    /// The same buttons laid out one by one, where there is room.
+    @ViewBuilder
+    private var composerIcons: some View {
+            Button {
+                showEmoji.toggle()
+            } label: {
+                Image(systemName: "face.smiling")
+            }
+            .buttonStyle(.borderless)
+            .disabled(!enabled)
+            .help("Insert an emoji")
+
+            Button(action: onAttach) {
+                if attaching {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Image(systemName: "paperclip")
+                }
+            }
+            .buttonStyle(.borderless)
+            .disabled(!enabled || attaching)
+            .help("Share a file — it is encrypted, uploaded to DISK, and the message carries the key")
+
+            if let call {
+                if call.choices.count == 1, let only = call.choices.first {
+                    Button(action: only.action) { Image(systemName: "phone") }
+                        .buttonStyle(.borderless)
+                        .opacity(call.dimmed ? 0.4 : 1)
+                        .help(call.help)
+                        .disabled(call.disabled)
+                } else {
+                    Menu {
+                        ForEach(call.choices) { choice in
+                            Button(choice.title, action: choice.action)
+                        }
+                    } label: {
+                        Image(systemName: "phone")
+                    }
+                    .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
+                    .fixedSize()
+                    .help(call.help)
+                    .disabled(call.disabled)
+                }
+            }
     }
 
     /// What the composer becomes while a note is being recorded.
@@ -217,6 +297,7 @@ struct MessageComposerView: View {
                     ProgressView().controlSize(.small)
                 } else {
                     Label("Send", systemImage: "paperplane.fill")
+                        .labelStyle(.iconOnly)
                 }
             }
             .buttonStyle(.borderedProminent)
@@ -247,4 +328,23 @@ private struct CopyableComposerError: View {
         CopyableText(text, font: .caption)
             .foregroundStyle(.orange)
     }
+}
+
+/// The phone in the composer, described rather than drawn, so that it can
+/// be an icon beside the text field or a row in the phone's More menu.
+struct ComposerCall {
+    struct Choice: Identifiable {
+        let id = UUID()
+        let title: String
+        let action: () -> Void
+    }
+
+    /// What the More menu calls it: "Voice call" or "Voice meeting".
+    let title: String
+    /// One choice is pressed directly; more are offered as a menu.
+    let choices: [Choice]
+    let help: String
+    /// Shown faded but still pressable: see `ChatView.composerCall(for:)`.
+    var dimmed = false
+    var disabled = false
 }
