@@ -235,6 +235,7 @@ struct SendPaymentView: View {
         // discover while filling this form in — not a peer
         // view to choose between before you start.
         Button {
+            appState.composeOpenedDirectly = false
             appState.sendMode = .compose
         } label: {
             Text("Advanced").frame(minHeight: 30)

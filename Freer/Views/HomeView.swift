@@ -141,18 +141,25 @@ struct HomeView: View {
         .safeAreaInset(edge: .bottom) { identityNoteBanner }
         // Something other than a tile chose a pane.
         .onChange(of: appState.selectedPane) { _, pane in
-            let wanted: [WalletPane] = pane == .overview ? [] : [pane]
+            let push = appState.consumePushFlag()
+            // Already on top: a Back that popped to it, or a second tap.
+            if path.last == pane || (pane == .overview && path.isEmpty) { return }
+            // A pane opened from another pane goes on top of it, so its
+            // Back returns there; anything else replaces the stack.
+            let wanted: [WalletPane] = pane == .overview ? [] : (push ? path + [pane] : [pane])
             if path != wanted { path = wanted }
         }
         // Back to the grid. Said to the app state too, so that tapping
         // the same tile again is a change it can see.
         .onChange(of: path) { was, now in
-            if now.isEmpty, appState.selectedPane != .overview {
-                appState.selectedPane = .overview
+            // Back to the grid, or to the pane underneath.
+            let top = now.last ?? .overview
+            if appState.selectedPane != top {
+                appState.selectedPane = top
             }
             // Going in, the cashes in the cache are about to be shown;
             // coming out, so are the ones the pane fetched meanwhile.
-            if was == [.cash] || now == [.cash] {
+            if was.last == .cash || now.last == .cash {
                 SeenCashes.markAllSeen(for: session)
             }
             if now.isEmpty {

@@ -321,7 +321,7 @@ struct PaneHeader: View {
         help: String
     ) -> some View {
         Button {
-            appState.selectedPane = .cash
+            appState.pushPane(.cash)
         } label: {
             HStack(spacing: 3) {
                 Text(text ?? "—")

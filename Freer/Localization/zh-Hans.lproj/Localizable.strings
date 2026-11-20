@@ -13,6 +13,8 @@
 "APP" = "应用";
 "Secret" = "秘密";
 "TX" = "交易";
+"New transaction" = "新建交易";
+"Compose a new transaction — choose the coins, pay several people at once, add a message or a time lock." = "手动组建一笔新交易——选择所用的币、一次付给多人、附加留言或时间锁。";
 "Contact" = "联系人";
 "Talk" = "对话";
 "First FCH" = "首币求助";

@@ -163,6 +163,28 @@ final class AppState {
     /// ``selectedPane``, and so it survives a trip to another pane.
     var sendMode: SendView.Mode = .send
 
+    /// Compose was opened on its own (the TX pane's +), not from Send's
+    /// Advanced button — so its Back leaves the Send pane rather than
+    /// returning to the simple Send form.
+    var composeOpenedDirectly = false
+
+    /// Set for one change of ``selectedPane``: the new pane goes on top
+    /// of the one on screen, so Back returns to it, instead of
+    /// replacing it.
+    private(set) var pushesNextPane = false
+
+    /// Open `pane` over the current one; Back comes back here.
+    func pushPane(_ pane: WalletPane) {
+        pushesNextPane = true
+        selectedPane = pane
+    }
+
+    /// Called by the home screen once it has acted on the flag.
+    func consumePushFlag() -> Bool {
+        defer { pushesNextPane = false }
+        return pushesNextPane
+    }
+
     /// Which page of Settings the pane shows. The home screen's gear is
     /// a menu of them, as on Android, rather than one long form.
     private(set) var settingsPage: SettingsPage = .identity

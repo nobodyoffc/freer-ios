@@ -34,6 +34,7 @@ import FCUI
 /// needs the group's keys, which are fetched from the chain on demand.
 struct CreateTxView: View {
     @Environment(AppState.self) private var appState
+    @Environment(\.dismiss) private var dismiss
     let session: ActiveSession
 
     // The document under construction.
@@ -143,13 +144,12 @@ struct CreateTxView: View {
     }
 
     /// Something has to be in the transaction. Outputs alone are
-    /// enough (coin selection can fund them); a message alone needs
-    /// inputs, because the automatic path pays one payee and carries
-    /// no OP_RETURN.
+    /// enough (coin selection can fund them). Inputs alone are enough
+    /// too, as on Android: with no output and no message, everything
+    /// less the fee comes back as change — a merge of the chosen cash.
     private var canSubmit: Bool {
         guard !busy else { return false }
-        if !outputSlots.isEmpty { return true }
-        return !inputSlots.isEmpty && !opReturn.isEmpty
+        return !outputSlots.isEmpty || !inputSlots.isEmpty
     }
 
     private static func key(_ slot: RawTxInfo.Slot) -> String {
@@ -180,7 +180,7 @@ struct CreateTxView: View {
         }
         .padding(.horizontal)
         .sheetFrame(minWidth: 580)
-        .bottomBar(back: { appState.sendMode = .send }) { actions }
+        .bottomBar(back: back) { actions }
         .task { await load() }
         .onChange(of: session.liveFid) { _, _ in
             clearAll()
@@ -253,6 +253,17 @@ struct CreateTxView: View {
             Spacer()
 
             if loading { ProgressView().controlSize(.small) }
+        }
+    }
+
+    /// Back from Advanced returns to the simple Send form; from a
+    /// Compose opened on its own (the TX pane's +), to whoever opened it.
+    private func back() {
+        if appState.composeOpenedDirectly {
+            appState.composeOpenedDirectly = false
+            dismiss()
+        } else {
+            appState.sendMode = .send
         }
     }
 
@@ -617,6 +628,7 @@ struct CreateTxView: View {
                             .fieldInputStyle()
                             .frame(width: 60)
                         Text("sat/byte").foregroundStyle(.secondary)
+                            .fixedSize()
                     }
                 }
                 if bestHeight > 0 {
@@ -628,9 +640,10 @@ struct CreateTxView: View {
                 Button {
                     Task { await load(force: true) }
                 } label: {
-                    Label("Refresh cash", systemImage: "arrow.clockwise")
+                    Image(systemName: "arrow.clockwise")
                 }
                 .disabled(loading)
+                .help("Refresh cash")
             }
             .padding(6)
         }

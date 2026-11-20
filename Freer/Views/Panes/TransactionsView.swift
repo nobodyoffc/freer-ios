@@ -11,6 +11,7 @@ import FCUI
 /// appear, then a fresh `base.search` runs in the background and
 /// replaces the rows on success.
 struct TransactionsView: View {
+    @Environment(AppState.self) private var appState
     let session: ActiveSession
 
     @State private var rows: [Cash] = []
@@ -35,7 +36,18 @@ struct TransactionsView: View {
         }
         .padding()
         .sheetFrame(minWidth: 480)
-        .bottomBar()
+        .bottomBar {
+            // A new transaction, composed by hand: the Send pane's
+            // Advanced form, opened in its place.
+            Button {
+                appState.sendMode = .compose
+                appState.composeOpenedDirectly = true
+                appState.pushPane(.send)
+            } label: {
+                Label("New transaction", systemImage: "plus")
+            }
+            .help("Compose a new transaction — choose the coins, pay several people at once, add a message or a time lock.")
+        }
         .onAppear {
             loadCacheIfNeeded()
             Task { await refresh() }
