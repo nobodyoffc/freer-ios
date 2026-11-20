@@ -19,7 +19,7 @@ import FCUI
 struct MessageRequestsSheet: View {
 
     @Environment(\.inspectFid) private var inspectFid
-
+    @Environment(\.horizontalSizeClass) private var sizeClass
 
     let session: ActiveSession
     /// Who these strangers are. The sheet needs it more than anywhere
@@ -34,8 +34,63 @@ struct MessageRequestsSheet: View {
     @State private var selected: String?
     @State private var held: [ImMessage] = []
     @State private var error: String?
+    /// On a phone: a sender has been tapped, and their messages fill the sheet.
+    @State private var phoneReading = false
+
+    private var compact: Bool { sizeClass == .compact }
+
+    /// A phone shows the senders or one sender's messages, never both side
+    /// by side: a 210-point list leaves the messages too narrow to read.
+    private var readingOnPhone: Bool {
+        compact && phoneReading && selected != nil
+    }
 
     var body: some View {
+        Group {
+            if readingOnPhone {
+                VStack(alignment: .leading, spacing: 10) {
+                    if let error {
+                        CopyableText(error, font: .caption).foregroundStyle(.red)
+                    }
+                    detail
+                }
+                .padding(20)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            } else {
+                overview
+            }
+        }
+        .sheetFrame(width: 640, height: 440)
+        .bottomBar(back: readingOnPhone ? { phoneReading = false } : onClose) {
+            if readingOnPhone, let selected {
+                requestActions(selected)
+            }
+        }
+        // Every request is from a FID, and deciding what to do about a
+        // stranger is exactly when their record is worth reading.
+        .fidDetailsHost(session: session)
+        .onAppear(perform: load)
+    }
+
+    /// Block, Reject, then Accept. All keep their words: none can be undone
+    /// from here, and Block is permanent.
+    @ViewBuilder
+    private func requestActions(_ fid: String) -> some View {
+        Button(role: .destructive) { block(fid) } label: {
+            Text("Block").frame(minHeight: 30)
+        }
+        .help("Throw this batch away and discard anything they send from now on, without holding it.")
+        Button { reject(fid) } label: {
+            Text("Reject").frame(minHeight: 30)
+        }
+        .help("Throw this batch away. They are not blocked — a later message will be held and asked about again.")
+        Button { accept(fid) } label: {
+            Text("Accept").frame(minHeight: 30)
+        }
+        .help("Start a conversation with everything they have said already in it, and stop asking about them.")
+    }
+
+    private var overview: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
                 Text("Message requests").font(.title3.bold())
@@ -57,6 +112,8 @@ struct MessageRequestsSheet: View {
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity)
                 Spacer()
+            } else if compact {
+                senderList
             } else {
                 HStack(alignment: .top, spacing: 12) {
                     senderList.frame(width: 210)
@@ -66,12 +123,7 @@ struct MessageRequestsSheet: View {
             }
         }
         .padding(20)
-        .sheetFrame(width: 640, height: 440)
-        .bottomBar(back: onClose)
-        // Every request is from a FID, and deciding what to do about a
-        // stranger is exactly when their record is worth reading.
-        .fidDetailsHost(session: session)
-        .onAppear(perform: load)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
     // MARK: - list
@@ -110,7 +162,10 @@ struct MessageRequestsSheet: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(request.fid == selected ? Color.accentColor.opacity(0.14) : .clear)
                     .contentShape(Rectangle())
-                    .onTapGesture { select(request.fid) }
+                    .onTapGesture {
+                        select(request.fid)
+                        if compact { phoneReading = true }
+                    }
                     Divider()
                 }
             }
@@ -125,7 +180,7 @@ struct MessageRequestsSheet: View {
     private var detail: some View {
         if let selected {
             VStack(alignment: .leading, spacing: 10) {
-                HStack(spacing: 8) {
+                FlowRow(spacing: 8) {
                     Button { inspectFid(selected) } label: {
                         FidAvatarView(
                             fid: selected,
@@ -154,8 +209,8 @@ struct MessageRequestsSheet: View {
                     }
                     .buttonStyle(.borderless)
                     .font(.caption)
-                    Spacer()
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
 
                 NobodyBanner(fid: selected, message: NobodyText.sender)
 
@@ -187,6 +242,8 @@ struct MessageRequestsSheet: View {
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
 
+                // On a phone these are in the bottom bar.
+                if !compact {
                 HStack {
                     Button("Accept") { accept(selected) }
                         .buttonStyle(.borderedProminent)
@@ -196,6 +253,7 @@ struct MessageRequestsSheet: View {
                     Spacer()
                     Button("Block", role: .destructive) { block(selected) }
                         .help("Throw this batch away and discard anything they send from now on, without holding it.")
+                }
                 }
             }
         } else {
@@ -258,6 +316,7 @@ struct MessageRequestsSheet: View {
     }
 
     private func finish() {
+        phoneReading = false
         load()
         onChanged()
     }

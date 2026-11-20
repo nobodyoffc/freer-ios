@@ -32,6 +32,8 @@ import FCUI
 /// changes the consensus again.
 struct ConsensusSignatureSheet: View {
 
+    @Environment(\.horizontalSizeClass) private var sizeClass
+
     let session: ActiveSession
     let onClose: () -> Void
     /// Called after anything that changes the team list.
@@ -44,6 +46,8 @@ struct ConsensusSignatureSheet: View {
     @State private var note: String?
     @State private var document: DocumentRequest?
     @State private var confirmingLeave = false
+    /// On a phone: a row has been tapped, and its detail fills the sheet.
+    @State private var phoneReading = false
 
     private struct DocumentRequest: Identifiable {
         let id = UUID()
@@ -56,44 +60,34 @@ struct ConsensusSignatureSheet: View {
         requests.first { $0.id == selectedId } ?? requests.first
     }
 
+    private var compact: Bool { sizeClass == .compact }
+
+    /// A phone shows the list or one team, never both side by side: a
+    /// 200-point list leaves the detail too narrow to read.
+    private var readingOnPhone: Bool {
+        compact && phoneReading && selected != nil
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack {
-                Text("Teams awaiting your agreement").font(.title3.bold())
-                Spacer()
-            }
-
-            Text("The chain lists you as not having agreed to these teams' current consensus documents. Nothing was sent to tell you — this is read from the teams themselves, so it is true whichever device you are on, and it goes away on its own once your agreement is carved.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-
-            if requests.isEmpty {
-                Spacer()
-                Text("Nothing is waiting on you.")
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity)
-                Spacer()
-            } else {
-                HStack(alignment: .top, spacing: 12) {
-                    list.frame(width: 200)
-                    Divider()
-                    detail
+        Group {
+            if readingOnPhone {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 14) {
+                        detail
+                        messages
+                    }
+                    .padding(20)
                 }
-            }
-
-            if let note {
-                Text(note).font(.caption).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            if let error {
-                CopyableText(error, font: .caption).foregroundStyle(.red)
-                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                overview
             }
         }
-        .padding(20)
         .sheetFrame(width: 640, height: 480)
-        .bottomBar(back: onClose)
+        .bottomBar(back: readingOnPhone ? { phoneReading = false } : onClose) {
+            if readingOnPhone, let request = selected {
+                requestActions(request)
+            }
+        }
         .onAppear(perform: load)
         .sheet(item: $document) { request in
             ConsensusDocumentSheet(
@@ -118,6 +112,73 @@ struct ConsensusSignatureSheet: View {
         }
     }
 
+    /// Leave, Not now, then Agree. All keep their words: two are
+    /// transactions, and the third is easily mistaken for a dismissal.
+    @ViewBuilder
+    private func requestActions(_ request: ConsensusSignatureRequest) -> some View {
+        Button(role: .destructive) { confirmingLeave = true } label: {
+            Text("Leave").frame(minHeight: 30)
+        }
+        .disabled(working || !session.canSign)
+        if !request.isPostponed {
+            Button { postpone(request) } label: {
+                Text("Not now").frame(minHeight: 30)
+            }
+            .disabled(working)
+            .help("Keeps it here and stops it prompting. It comes back if the owner changes the consensus again.")
+        }
+        Button { agree(request) } label: {
+            Text(working ? "Carving…" : "Agree").frame(minHeight: 30)
+        }
+        .disabled(working || !session.canSign)
+    }
+
+    @ViewBuilder
+    private var messages: some View {
+        if let note {
+            Text(note).font(.caption).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        if let error {
+            CopyableText(error, font: .caption).foregroundStyle(.red)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private var overview: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                Text("Teams awaiting your agreement").font(.title3.bold())
+                Spacer()
+            }
+
+            Text("The chain lists you as not having agreed to these teams' current consensus documents. Nothing was sent to tell you — this is read from the teams themselves, so it is true whichever device you are on, and it goes away on its own once your agreement is carved.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if requests.isEmpty {
+                Spacer()
+                Text("Nothing is waiting on you.")
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity)
+                Spacer()
+            } else if compact {
+                list
+            } else {
+                HStack(alignment: .top, spacing: 12) {
+                    list.frame(width: 200)
+                    Divider()
+                    detail
+                }
+            }
+
+            messages
+        }
+        .padding(20)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+
     private var list: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
@@ -126,6 +187,7 @@ struct ConsensusSignatureSheet: View {
                         selectedId = request.id
                         note = nil
                         error = nil
+                        if compact { phoneReading = true }
                     } label: {
                         HStack(spacing: 6) {
                             VStack(alignment: .leading, spacing: 2) {
@@ -185,13 +247,15 @@ struct ConsensusSignatureSheet: View {
                     missingNote: String(localized: "This Mac never saw this team's previous consensus, so there is nothing to compare against. The owner can tell you what changed.")
                 )
 
-                Spacer()
+                if !compact { Spacer() }
 
                 Text("Agreeing is a transaction: it costs a miner fee and is public. It quotes the team's consensus id as it stands the moment you sign, so if the owner has changed it again since, that is what gets signed.")
                     .font(.caption)
                     .foregroundStyle(.tertiary)
                     .fixedSize(horizontal: false, vertical: true)
 
+                // On a phone these are in the bottom bar.
+                if !compact {
                 HStack {
                     Button(working ? "Carving…" : "Agree") { agree(request) }
                         .buttonStyle(.borderedProminent)
@@ -204,6 +268,7 @@ struct ConsensusSignatureSheet: View {
                     Spacer()
                     Button("Leave the team", role: .destructive) { confirmingLeave = true }
                         .disabled(working || !session.canSign)
+                }
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -349,6 +414,7 @@ struct ConsensusSignatureSheet: View {
                     // asking again before the carve confirms.
                     _ = try? session.consensusSignatures.remove(teamId: request.id)
                     load()
+                    phoneReading = false
                     note = String(localized: "Leaving — tx \(txid.elidingMiddle(head: 8, tail: 8)). The thread stays on this device and stops receiving once the carve confirms.")
                     onChanged()
                 }

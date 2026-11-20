@@ -23,6 +23,7 @@ import FCUI
 struct TeamOffersSheet: View {
 
     @Environment(\.inspectFid) private var inspectFid
+    @Environment(\.horizontalSizeClass) private var sizeClass
 
     let session: ActiveSession
     let onClose: () -> Void
@@ -38,6 +39,8 @@ struct TeamOffersSheet: View {
     @State private var note: String?
     @State private var document: DocumentRequest?
     @State private var confirming: TeamOffer?
+    /// On a phone: a row has been tapped, and its detail fills the sheet.
+    @State private var phoneReading = false
 
     @State private var searchText = ""
     @State private var searching = false
@@ -60,7 +63,138 @@ struct TeamOffersSheet: View {
         shown.first { $0.id == selectedId } ?? shown.first
     }
 
+    private var compact: Bool { sizeClass == .compact }
+
+    /// A phone shows the list or one offer, never both side by side: a
+    /// 220-point list leaves the detail too narrow for its FID rows.
+    private var readingOnPhone: Bool {
+        compact && phoneReading && selected != nil
+    }
+
     var body: some View {
+        Group {
+            if readingOnPhone {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 12) {
+                        detail
+                        messages
+                    }
+                    .padding(20)
+                }
+            } else {
+                overview
+            }
+        }
+        .sheetFrame(width: 720, height: 600)
+        .bottomBar(back: readingOnPhone ? { phoneReading = false } : onClose) {
+            if readingOnPhone, let offer = selected {
+                offerActions(offer)
+            } else {
+                refreshButton
+            }
+        }
+        .fidDetailsHost(session: session)
+        .onAppear {
+            load()
+            Task { await refresh() }
+        }
+        .sheet(item: $document) { request in
+            documentSheet(request)
+        }
+        .confirmationDialog(
+            confirmTitle(confirming),
+            isPresented: Binding(
+                get: { confirming != nil },
+                set: { if !$0 { confirming = nil } }
+            ),
+            titleVisibility: .visible,
+            presenting: confirming
+        ) { offer in
+            confirmButtons(offer)
+        } message: { offer in
+            Text(confirmMessage(offer))
+        }
+    }
+
+    // MARK: - chrome
+
+    private var refreshButton: some View {
+        Button {
+            Task { await refresh() }
+        } label: {
+            if refreshing {
+                ProgressView().controlSize(.small)
+            } else {
+                Label("Check the chain", systemImage: "arrow.clockwise")
+            }
+        }
+        .disabled(refreshing)
+        .help("Ask the chain which teams list this FID as invited, or as the one they are being handed to")
+    }
+
+    /// Ignore (or Restore), then Join or Take over. Both keep their words:
+    /// one hides the offer, the other broadcasts a carve.
+    @ViewBuilder
+    private func offerActions(_ offer: TeamOffer) -> some View {
+        if offer.isIgnored {
+            Button { setIgnored(false, offer) } label: {
+                Text("Restore").frame(minHeight: 30)
+            }
+        } else {
+            // Back to the list: an ignored offer leaves it.
+            Button { setIgnored(true, offer); phoneReading = false } label: {
+                Text("Ignore").frame(minHeight: 30)
+            }
+            .help("Stops it showing. A resent notice will not bring it back; the Show ignored box will.")
+        }
+        Button { confirming = offer } label: {
+            Text(working ? "Carving…" : (offer.kind == .transfer ? "Take over…" : "Join…"))
+                .frame(minHeight: 30)
+        }
+        .disabled(working || !offer.isOnChain || !session.canSign)
+        .help(offer.isOnChain
+              ? "Read the team again from the chain, then carve"
+              : "The chain does not list this yet — check again once the invitation has confirmed")
+    }
+
+    @ViewBuilder
+    private var messages: some View {
+        if let note {
+            Text(note).font(.caption).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        if let error {
+            CopyableText(error, font: .caption).foregroundStyle(.red)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private func documentSheet(_ request: DocumentRequest) -> some View {
+        ConsensusDocumentSheet(
+            session: session,
+            title: request.title,
+            consensusId: request.consensusId,
+            diskSids: request.diskSids,
+            editable: false,
+            onSaved: { _ in document = nil },
+            onClose: { document = nil }
+        )
+    }
+
+    @ViewBuilder
+    private func confirmButtons(_ offer: TeamOffer) -> some View {
+        Button(offer.kind == .transfer ? "Take over (broadcast a carve)" : "Join (broadcast a carve)") {
+            answer(offer)
+        }
+        if let consensusId = offer.consensusId, !consensusId.isEmpty {
+            Button("Read the consensus first") { read(offer) }
+        }
+        Button("Cancel", role: .cancel) { confirming = nil }
+    }
+
+    // MARK: - overview
+
+    private var overview: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Text("Team invitations").font(.title3.bold())
@@ -85,6 +219,13 @@ struct TeamOffersSheet: View {
                     Spacer()
                 }
                 .frame(maxWidth: .infinity)
+            } else if compact {
+                VStack(alignment: .leading, spacing: 6) {
+                    list
+                    Toggle("Show ignored", isOn: $showIgnored)
+                        .toggleStyle(.checkmark)
+                        .font(.caption)
+                }
             } else {
                 HStack(alignment: .top, spacing: 12) {
                     VStack(alignment: .leading, spacing: 6) {
@@ -101,66 +242,10 @@ struct TeamOffersSheet: View {
 
             Divider()
             searchSection
-
-            if let note {
-                Text(note).font(.caption).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            if let error {
-                CopyableText(error, font: .caption).foregroundStyle(.red)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+            messages
         }
         .padding(20)
-        .sheetFrame(width: 720, height: 600)
-        .bottomBar(back: onClose) {
-            Button {
-                Task { await refresh() }
-            } label: {
-                if refreshing {
-                    ProgressView().controlSize(.small)
-                } else {
-                    Label("Check the chain", systemImage: "arrow.clockwise")
-                }
-            }
-            .disabled(refreshing)
-            .help("Ask the chain which teams list this FID as invited, or as the one they are being handed to")
-        }
-        .fidDetailsHost(session: session)
-        .onAppear {
-            load()
-            Task { await refresh() }
-        }
-        .sheet(item: $document) { request in
-            ConsensusDocumentSheet(
-                session: session,
-                title: request.title,
-                consensusId: request.consensusId,
-                diskSids: request.diskSids,
-                editable: false,
-                onSaved: { _ in document = nil },
-                onClose: { document = nil }
-            )
-        }
-        .confirmationDialog(
-            confirmTitle(confirming),
-            isPresented: Binding(
-                get: { confirming != nil },
-                set: { if !$0 { confirming = nil } }
-            ),
-            titleVisibility: .visible,
-            presenting: confirming
-        ) { offer in
-            Button(offer.kind == .transfer ? "Take over (broadcast a carve)" : "Join (broadcast a carve)") {
-                answer(offer)
-            }
-            if let consensusId = offer.consensusId, !consensusId.isEmpty {
-                Button("Read the consensus first") { read(offer) }
-            }
-            Button("Cancel", role: .cancel) { confirming = nil }
-        } message: { offer in
-            Text(confirmMessage(offer))
-        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
     // MARK: - list
@@ -173,6 +258,7 @@ struct TeamOffersSheet: View {
                         selectedId = offer.id
                         note = nil
                         error = nil
+                        if compact { phoneReading = true }
                     } label: {
                         HStack(spacing: 8) {
                             GroupAvatarView(groupId: offer.teamId, ownerFid: offer.owner, size: 28)
@@ -217,7 +303,7 @@ struct TeamOffersSheet: View {
     private var detail: some View {
         if let offer = selected {
             VStack(alignment: .leading, spacing: 10) {
-                HStack(spacing: 8) {
+                FlowRow(spacing: 8) {
                     Text(offer.teamName ?? String(localized: "A team")).font(.headline).lineLimit(1)
                     ChatChip(
                         offer.kind == .transfer ? String(localized: "handed to you") : "invited",
@@ -249,13 +335,15 @@ struct TeamOffersSheet: View {
 
                 consensusRow(offer)
 
-                Spacer(minLength: 0)
+                if !compact { Spacer(minLength: 0) }
 
                 Text(explanation(offer))
                     .font(.caption)
                     .foregroundStyle(.tertiary)
                     .fixedSize(horizontal: false, vertical: true)
 
+                // On a phone these are in the bottom bar.
+                if !compact {
                 HStack {
                     Button(working ? "Carving…" : (offer.kind == .transfer ? "Take over…" : "Join…")) {
                         confirming = offer
@@ -273,6 +361,7 @@ struct TeamOffersSheet: View {
                             .help("Stops it showing. A resent notice will not bring it back; the Show ignored box will.")
                     }
                 }
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         } else {
@@ -280,18 +369,21 @@ struct TeamOffersSheet: View {
         }
     }
 
+    /// The label sits above the FID: beside it, a phone has no room left
+    /// for the badge and the contact's name.
     private func fidRow(_ label: String, _ fid: String) -> some View {
-        HStack(spacing: 6) {
+        VStack(alignment: .leading, spacing: 4) {
             Text(label)
                 .font(.caption).fontWeight(.semibold)
                 .textCase(.uppercase).tracking(0.5)
                 .foregroundStyle(.secondary)
-                .frame(width: 64, alignment: .leading)
+            FlowRow(spacing: 6) {
             Button { inspectFid(fid) } label: { FidAvatarView(fid: fid, size: 20) }
                 .buttonStyle(.plain)
             NobodyChip(fid: fid)
             FidBadge(fid, font: .callout)
             ContactLabelText(fid: fid, font: .callout)
+            }
         }
     }
 
