@@ -104,7 +104,8 @@ Mac file at the new commit), keep the iOS side of conflicts around file panels
 and alerts, and update the recorded commit. Rewording "this device" back to
 "this Mac" on the iOS side first removes most of the false conflicts.
 
-Taken out of order since that commit: the language setting (`be3995d`).
+Taken out of order since that commit: the language setting (`be3995d`), and
+Create new password's own screen (`f404e0e`).
 Deliberately not taken: larger controls (`d9338b7`).
 
 ## Build and check

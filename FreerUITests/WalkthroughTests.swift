@@ -42,9 +42,21 @@ final class WalkthroughTests: XCTestCase {
         password.tap()
         password.typeText("walkthrough-vault-1")
 
-        // Opens the vault this password already has, or makes it: a
-        // fresh install and a rerun take the same button.
-        app.buttons["Create new password"].tap()
+        // A rerun opens the vault made last time; a fresh install has
+        // none, so it makes one on Create new password, typed twice.
+        app.buttons["Check password"].tap()
+        if !app.staticTexts["Choose identity"].waitForExistence(timeout: 30) {
+            app.buttons["Create new password"].tap()
+            let first = app.secureTextFields["Password"]
+            XCTAssertTrue(first.waitForExistence(timeout: 10), "the create-password screen")
+            snap("create-password")
+            first.tap()
+            first.typeText("walkthrough-vault-1")
+            let second = app.secureTextFields["Confirm password"]
+            second.tap()
+            second.typeText("walkthrough-vault-1")
+            app.buttons["Create"].tap()
+        }
         XCTAssertTrue(app.staticTexts["Choose identity"].waitForExistence(timeout: 30), "the identity chooser")
         snap("choose-identity")
 
@@ -310,7 +322,8 @@ final class WalkthroughTests: XCTestCase {
         snap("zh-password")
         password.tap()
         password.typeText("walkthrough-vault-1")
-        app.buttons["创建新密码"].tap()
+        // The vault testWalkthrough() made.
+        app.buttons["验证密码"].tap()
         XCTAssertTrue(app.staticTexts["选择身份"].waitForExistence(timeout: 30), "the identity chooser")
         snap("zh-choose-identity")
         app.cells.firstMatch.tap()
