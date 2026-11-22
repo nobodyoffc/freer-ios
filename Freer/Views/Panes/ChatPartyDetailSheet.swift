@@ -335,7 +335,7 @@ struct ChatPartyDetailSheet: View {
     private var peerSection: some View {
         section(String(localized: "Presence")) {
             row(String(localized: "Last seen")) {
-                Text(party?.lastSeen.map(Self.stamp.string(from:)) ?? String(localized: "Never"))
+                Text(party?.lastSeen.map(DateStamp.full) ?? String(localized: "Never"))
                     .foregroundStyle(party?.lastSeen == nil ? .secondary : .primary)
             }
             row(String(localized: "Last delivered by")) {
@@ -435,13 +435,6 @@ struct ChatPartyDetailSheet: View {
             .foregroundStyle(warning ? Color.orange : Color.secondary)
             .fixedSize(horizontal: false, vertical: true)
     }
-
-    private static let stamp: DateFormatter = {
-        let f = DateFormatter()
-        f.dateStyle = .medium
-        f.timeStyle = .short
-        return f
-    }()
 
     // MARK: - loading
 

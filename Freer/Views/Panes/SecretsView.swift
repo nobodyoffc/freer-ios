@@ -780,8 +780,7 @@ private struct SecretDetailSheet: View {
                     HStack(spacing: 24) {
                         if let birthTime = secret.birthTime {
                             field(String(localized: "Carved")) {
-                                Text(Date(timeIntervalSince1970: TimeInterval(birthTime)),
-                                     format: .dateTime.year().month().day().hour().minute())
+                                DateStampText(seconds: birthTime, twoRows: true, alignment: .leading)
                                     .font(.caption)
                             }
                         }
@@ -792,8 +791,7 @@ private struct SecretDetailSheet: View {
                             }
                         }
                         field(String(localized: "Saved")) {
-                            Text(secret.addedAt,
-                                 format: .dateTime.year().month().day().hour().minute())
+                            DateStampText(secret.addedAt, twoRows: true, alignment: .leading)
                                 .font(.caption)
                         }
                     }

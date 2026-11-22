@@ -542,7 +542,7 @@ struct ProtocolsView: View {
                     Spacer(minLength: 8)
 
                     if let t = spec.lastTime {
-                        Text(Self.dateFormatter.string(from: Date(timeIntervalSince1970: TimeInterval(t))))
+                        DateStampText(seconds: t, twoRows: true)
                             .font(.caption)
                             .foregroundStyle(.tertiary)
                     }
@@ -1104,12 +1104,6 @@ struct ProtocolsView: View {
             }
         }
     }
-
-    private static let dateFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.dateFormat = "yy-MM-dd HH:mm"
-        return f
-    }()
 
     private func copyToPasteboard(_ value: String) {
         NSPasteboard.general.clearContents()

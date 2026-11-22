@@ -153,7 +153,7 @@ struct RatingHistoryView: View {
     private func timeText(_ row: RatingHist) -> String? {
         guard let time = row.time else { return nil }
         let seconds = time > 10_000_000_000 ? Double(time) / 1000 : Double(time)
-        return RateRecordSheet.stamp.string(from: Date(timeIntervalSince1970: seconds))
+        return DateStamp.full(Date(timeIntervalSince1970: seconds))
     }
 
     // MARK: - work

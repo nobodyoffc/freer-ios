@@ -379,7 +379,7 @@ struct RateFreerSheet: View {
         let weight = row.hot.map { String(localized: "\(Self.grouped($0)) CDD") } ?? String(localized: "unknown weight")
         guard let time = row.time else { return "\(verdict) · \(weight)" }
         let seconds = time > 10_000_000_000 ? Double(time) / 1000 : Double(time)
-        return "\(verdict) · \(weight) · \(Self.stamp.string(from: Date(timeIntervalSince1970: seconds)))"
+        return "\(verdict) · \(weight) · \(DateStamp.full(Date(timeIntervalSince1970: seconds)))"
     }
 
     // MARK: - building blocks
@@ -430,13 +430,6 @@ struct RateFreerSheet: View {
         f.numberStyle = .decimal
         return f.string(from: NSNumber(value: n)) ?? String(n)
     }
-
-    private static let stamp: DateFormatter = {
-        let f = DateFormatter()
-        f.dateStyle = .medium
-        f.timeStyle = .short
-        return f
-    }()
 
     // MARK: - work
 

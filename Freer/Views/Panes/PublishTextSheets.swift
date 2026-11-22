@@ -542,7 +542,7 @@ struct TextReaderSheet: View {
                         .help("This record was indexed before the server set an edition counter, so it has none. It is not a first edition; it is an unknown one.")
                 }
                 if let t = record.lastTime {
-                    Text(Date(timeIntervalSince1970: TimeInterval(t)).formatted(date: .abbreviated, time: .shortened))
+                    DateStampText(seconds: t, twoRows: true, alignment: .leading)
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }

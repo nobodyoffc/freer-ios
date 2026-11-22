@@ -174,7 +174,7 @@ struct ConversationListView: View {
                     // its own width — and a long date is wide.
                     Spacer(minLength: 8)
                     if let time = conversation.lastActiveAt {
-                        Text(ChatFormat.shortTime.string(from: Date(timeIntervalSince1970: Double(time) / 1000)))
+                        DateStampText(millis: time, twoRows: true)
                             .font(.caption2)
                             .foregroundStyle(.tertiary)
                             .fixedSize()
@@ -269,11 +269,4 @@ enum ChatFormat {
     static func title(of conversation: Conversation) -> String {
         conversation.displayName ?? conversation.targetId.elidingMiddle(head: 8, tail: 6)
     }
-
-    static let shortTime: DateFormatter = {
-        let f = DateFormatter()
-        f.dateStyle = .short
-        f.timeStyle = .short
-        return f
-    }()
 }

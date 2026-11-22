@@ -218,8 +218,7 @@ struct TransactionsView: View {
             }
             VStack(alignment: .trailing, spacing: 2) {
                 if let ts = cash.birthTime {
-                    Text(Date(timeIntervalSince1970: TimeInterval(ts))
-                        .formatted(date: .abbreviated, time: .shortened))
+                    DateStampText(seconds: ts, twoRows: true)
                         .font(.caption.monospacedDigit())
                         .foregroundStyle(.secondary)
                 }
@@ -323,8 +322,7 @@ struct TransactionsView: View {
             Spacer()
             VStack(alignment: .trailing, spacing: 2) {
                 if let ts = group.time {
-                    Text(Date(timeIntervalSince1970: TimeInterval(ts))
-                        .formatted(date: .abbreviated, time: .shortened))
+                    DateStampText(seconds: ts, twoRows: true)
                         .font(.caption.monospacedDigit())
                         .foregroundStyle(.secondary)
                 }

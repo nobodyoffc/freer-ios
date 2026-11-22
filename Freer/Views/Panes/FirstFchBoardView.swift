@@ -491,9 +491,11 @@ struct FirstFchBoardView: View {
                 }
             }
             Spacer(minLength: 8)
-            Text(time(request.createTime))
-                .font(.caption.monospacedDigit())
-                .foregroundStyle(.tertiary)
+            if request.createTime > 0 {
+                DateStampText(millis: request.createTime, twoRows: true)
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
         }
         .padding(.vertical, 3)
     }
@@ -815,13 +817,6 @@ struct FirstFchBoardView: View {
         return f.localizedString(
             for: Date(timeIntervalSince1970: Double(millis) / 1000), relativeTo: Date()
         )
-    }
-
-    private func time(_ millis: Int64) -> String {
-        guard millis > 0 else { return "" }
-        let f = DateFormatter()
-        f.dateFormat = "MM/dd HH:mm"
-        return f.string(from: Date(timeIntervalSince1970: Double(millis) / 1000))
     }
 }
 

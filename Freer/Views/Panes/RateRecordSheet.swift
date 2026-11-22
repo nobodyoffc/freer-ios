@@ -474,20 +474,13 @@ struct RateRecordSheet: View {
         return f.string(from: NSNumber(value: n)) ?? String(n)
     }
 
-    static let stamp: DateFormatter = {
-        let f = DateFormatter()
-        f.dateStyle = .medium
-        f.timeStyle = .short
-        return f
-    }()
-
     /// One history row as a line — score, weight, when.
     static func summary(of row: RatingHist) -> String {
         let value = row.rate.map(String.init) ?? "—"
         let weight = row.cdd.map { String(localized: "\(grouped($0)) CDD") } ?? String(localized: "unknown weight")
         guard let time = row.time else { return "\(value) · \(weight)" }
         let seconds = time > 10_000_000_000 ? Double(time) / 1000 : Double(time)
-        return "\(value) · \(weight) · \(stamp.string(from: Date(timeIntervalSince1970: seconds)))"
+        return "\(value) · \(weight) · \(DateStamp.full(Date(timeIntervalSince1970: seconds)))"
     }
 
     // MARK: - work

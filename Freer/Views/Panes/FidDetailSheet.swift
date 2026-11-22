@@ -333,7 +333,7 @@ struct FidDetailSheet: View {
                     }
                 }
                 row(String(localized: "Saved")) {
-                    Text(Self.stamp.string(from: contact.addedAt)).foregroundStyle(.secondary)
+                    Text(DateStamp.full(contact.addedAt)).foregroundStyle(.secondary)
                 }
                 if contact.onChain == true {
                     row(String(localized: "Carved")) {
@@ -788,19 +788,12 @@ struct FidDetailSheet: View {
     /// record predates the chain, so the ambiguity only runs one way.
     private static func chainTime(_ raw: Int64) -> String {
         let seconds = raw > 10_000_000_000 ? Double(raw) / 1000 : Double(raw)
-        return stamp.string(from: Date(timeIntervalSince1970: seconds))
+        return DateStamp.full(Date(timeIntervalSince1970: seconds))
     }
 
     /// How many rating rows a page holds. Also the test for whether
     /// there are more — see ``loadRatings(more:)``.
     private static let ratingsPageSize = 25
-
-    private static let stamp: DateFormatter = {
-        let f = DateFormatter()
-        f.dateStyle = .medium
-        f.timeStyle = .short
-        return f
-    }()
 
     // MARK: - loading
 

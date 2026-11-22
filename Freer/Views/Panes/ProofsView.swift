@@ -457,7 +457,7 @@ struct ProofsView: View {
                     Spacer(minLength: 8)
 
                     if let t = proof.lastTime {
-                        Text(Self.dateFormatter.string(from: Date(timeIntervalSince1970: TimeInterval(t))))
+                        DateStampText(seconds: t, twoRows: true)
                             .font(.caption)
                             .foregroundStyle(.tertiary)
                     }
@@ -943,12 +943,6 @@ struct ProofsView: View {
                 .foregroundStyle(.secondary)
         }
     }
-
-    private static let dateFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.dateFormat = "yy-MM-dd HH:mm"
-        return f
-    }()
 
     private func copyToPasteboard(_ value: String) {
         NSPasteboard.general.clearContents()

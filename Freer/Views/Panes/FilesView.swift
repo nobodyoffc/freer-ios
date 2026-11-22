@@ -757,11 +757,7 @@ struct FilesView: View {
     }
 
     static func formatDate(_ epochMs: Int64) -> String {
-        let date = Date(timeIntervalSince1970: Double(epochMs) / 1000)
-        let f = DateFormatter()
-        f.dateStyle = .medium
-        f.timeStyle = .short
-        return f.string(from: date)
+        DateStamp.full(millis: epochMs)
     }
 }
 

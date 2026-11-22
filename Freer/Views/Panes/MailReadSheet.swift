@@ -105,7 +105,7 @@ struct MailReadSheet: View {
             Spacer()
             VStack(alignment: .trailing, spacing: 4) {
                 if let t = mail.birthTime {
-                    Text(Self.dateFormatter.string(from: Date(timeIntervalSince1970: TimeInterval(t))))
+                    DateStampText(seconds: t)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -201,11 +201,4 @@ struct MailReadSheet: View {
             }
         }
     }
-
-    private static let dateFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.dateStyle = .full
-        f.timeStyle = .short
-        return f
-    }()
 }

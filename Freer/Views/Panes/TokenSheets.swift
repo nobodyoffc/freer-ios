@@ -972,9 +972,7 @@ struct TokenDetailSheet: View {
     }
 
     static func dateString(_ seconds: Int64) -> String {
-        let f = DateFormatter()
-        f.dateFormat = "yy-MM-dd HH:mm"
-        return f.string(from: Date(timeIntervalSince1970: TimeInterval(seconds)))
+        DateStamp.full(seconds: seconds)
     }
 }
 

@@ -226,7 +226,7 @@ struct NewsView: View {
         var parts = ["Showing \(filtered.count)"]
         if let total { parts.append(String(localized: "of \(String(total)) on-chain")) }
         if let at = showingCacheFrom {
-            let when = Self.dateFormatter.string(from: Date(timeIntervalSince1970: TimeInterval(at)))
+            let when = DateStamp.full(seconds: at)
             parts.append(String(localized: "cached \(when) — offline"))
         }
         return parts.joined(separator: " · ")
@@ -321,7 +321,7 @@ struct NewsView: View {
                     Spacer(minLength: 8)
 
                     if let t = item.time {
-                        Text(Self.dateFormatter.string(from: Date(timeIntervalSince1970: TimeInterval(t))))
+                        DateStampText(seconds: t, twoRows: true)
                             .font(.caption)
                             .foregroundStyle(.tertiary)
                     }
@@ -402,13 +402,6 @@ struct NewsView: View {
                 .foregroundStyle(.secondary)
         }
     }
-
-    private static let dateFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.dateStyle = .medium
-        f.timeStyle = .short
-        return f
-    }()
 
     private func copyToPasteboard(_ value: String) {
         NSPasteboard.general.clearContents()
@@ -625,7 +618,7 @@ private struct NewsDetailSheet: View {
                     field(String(localized: "Object ID"), news.objectId, mono: true)
                     field(String(localized: "Height"), news.height.map(String.init))
                     field(String(localized: "Time"), news.time.map {
-                        Self.dateFormatter.string(from: Date(timeIntervalSince1970: TimeInterval($0)))
+                        DateStamp.full(seconds: $0)
                     })
                     field(String(localized: "Record ID"), news.id, mono: true)
                 }
@@ -657,11 +650,4 @@ private struct NewsDetailSheet: View {
             }
         }
     }
-
-    private static let dateFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.dateStyle = .medium
-        f.timeStyle = .medium
-        return f
-    }()
 }

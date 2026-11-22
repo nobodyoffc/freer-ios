@@ -846,15 +846,13 @@ struct CodeDetailSheet: View {
                     HStack(spacing: 24) {
                         if let t = code.birthTime {
                             field(String(localized: "Published")) {
-                                Text(Date(timeIntervalSince1970: TimeInterval(t)),
-                                     format: .dateTime.year().month().day().hour().minute())
+                                DateStampText(seconds: t, twoRows: true, alignment: .leading)
                                     .font(.caption)
                             }
                         }
                         if let t = code.lastTime {
                             field(String(localized: "Last change")) {
-                                Text(Date(timeIntervalSince1970: TimeInterval(t)),
-                                     format: .dateTime.year().month().day().hour().minute())
+                                DateStampText(seconds: t, twoRows: true, alignment: .leading)
                                     .font(.caption)
                             }
                         }

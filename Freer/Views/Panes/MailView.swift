@@ -366,32 +366,36 @@ struct MailView: View {
             }
 
             VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 6) {
-                    Text(mail.counterpartyName(for: me).map(displayName) ?? "?")
-                        .font(mail.unread == true ? .body.bold() : .body)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                    if let party = mail.counterparty(for: me) {
-                        ContactLabelText(fid: party, font: .callout)
+                HStack(alignment: .top, spacing: 8) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 6) {
+                            Text(mail.counterpartyName(for: me).map(displayName) ?? "?")
+                                .font(mail.unread == true ? .body.bold() : .body)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                            if let party = mail.counterparty(for: me) {
+                                ContactLabelText(fid: party, font: .callout)
+                            }
+
+                            if mail.lastHeight == MailsStore.unconfirmedHeight {
+                                chip(String(localized: "Pending"), color: .orange)
+                            }
+                            if mail.isDeleted {
+                                chip(String(localized: "Deleted"), color: .red)
+                            }
+                        }
+                        if let fee = mail.noticeFee, fee > 0 {
+                            chip(
+                                "\(mail.isIncoming(for: me) ? "+" : "−")\(NoticeFee.coinString(satoshis: fee)) F",
+                                color: mail.isIncoming(for: me) ? .green : .secondary
+                            )
+                        }
                     }
 
-                    if mail.lastHeight == MailsStore.unconfirmedHeight {
-                        chip(String(localized: "Pending"), color: .orange)
-                    }
-                    if mail.isDeleted {
-                        chip(String(localized: "Deleted"), color: .red)
-                    }
-                    if let fee = mail.noticeFee, fee > 0 {
-                        chip(
-                            "\(mail.isIncoming(for: me) ? "+" : "−")\(NoticeFee.coinString(satoshis: fee)) F",
-                            color: mail.isIncoming(for: me) ? .green : .secondary
-                        )
-                    }
-
-                    Spacer(minLength: 8)
+                    Spacer(minLength: 0)
 
                     if let t = mail.birthTime {
-                        Text(Self.dateFormatter.string(from: Date(timeIntervalSince1970: TimeInterval(t))))
+                        DateStampText(seconds: t, twoRows: true)
                             .font(.caption)
                             .foregroundStyle(.tertiary)
                     }
@@ -475,13 +479,6 @@ struct MailView: View {
             .background(Color(NSColor.controlBackgroundColor))
             .clipShape(RoundedRectangle(cornerRadius: 12))
     }
-
-    private static let dateFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.dateStyle = .medium
-        f.timeStyle = .short
-        return f
-    }()
 
     // MARK: - actions
 

@@ -239,8 +239,7 @@ struct StatementReaderSheet: View {
                         name: statement.publisher.flatMap(name)
                     )
                     if let t = statement.birthTime {
-                        Text(Date(timeIntervalSince1970: TimeInterval(t))
-                            .formatted(date: .abbreviated, time: .shortened))
+                        DateStampText(seconds: t, twoRows: true, alignment: .leading)
                             .font(.caption).foregroundStyle(.secondary)
                     }
                     if let h = statement.birthHeight, h != StatementsStore.unconfirmedHeight {

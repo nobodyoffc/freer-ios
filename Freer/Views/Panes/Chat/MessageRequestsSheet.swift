@@ -221,9 +221,7 @@ struct MessageRequestsSheet: View {
                                 Text(Conversation.preview(for: message) ?? "")
                                     .textSelection(.enabled)
                                 if let time = message.timestamp {
-                                    Text(ChatFormat.shortTime.string(
-                                        from: Date(timeIntervalSince1970: Double(time) / 1000)
-                                    ))
+                                    Text(DateStamp.full(millis: time))
                                     .font(.caption2)
                                     .foregroundStyle(.tertiary)
                                 }

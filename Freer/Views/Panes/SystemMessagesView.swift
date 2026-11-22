@@ -163,7 +163,7 @@ struct SystemMessagesView: View {
 
                 Spacer(minLength: 8)
 
-                Text(Self.stamp.string(from: message.at))
+                DateStampText(message.at, twoRows: true)
                     .font(.caption2.monospacedDigit())
                     .foregroundStyle(.tertiary)
 
@@ -209,12 +209,6 @@ struct SystemMessagesView: View {
         }
     }
 
-    private static let stamp: DateFormatter = {
-        let f = DateFormatter()
-        f.dateFormat = "HH:mm:ss"
-        return f
-    }()
-
     // MARK: - actions
 
     private func reload() {
@@ -222,7 +216,7 @@ struct SystemMessagesView: View {
     }
 
     private func copyText(_ message: SystemMessage) -> String {
-        var text = "[\(Self.stamp.string(from: message.at))] "
+        var text = "[\(DateStamp.full(message.at))] "
             + "\(message.level.rawValue.uppercased()) \(message.source): \(message.summary)"
         if let detail = message.detail { text += "\n    \(detail)" }
         return text

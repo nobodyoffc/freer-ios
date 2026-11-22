@@ -617,7 +617,7 @@ struct TokensView: View {
                     Spacer(minLength: 8)
 
                     if let t = token.lastTime {
-                        Text(TokenDetailSheet.dateString(t))
+                        DateStampText(seconds: t, twoRows: true)
                             .font(.caption)
                             .foregroundStyle(.tertiary)
                     }

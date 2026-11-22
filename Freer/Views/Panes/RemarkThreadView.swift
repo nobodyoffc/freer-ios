@@ -199,8 +199,7 @@ struct RemarkThreadView: View {
                     }
                     Spacer()
                     if let t = remark.birthTime ?? remark.lastTime {
-                        Text(Date(timeIntervalSince1970: TimeInterval(t))
-                            .formatted(date: .abbreviated, time: .shortened))
+                        DateStampText(seconds: t, twoRows: true)
                             .font(.caption2).foregroundStyle(.tertiary)
                     }
                 }

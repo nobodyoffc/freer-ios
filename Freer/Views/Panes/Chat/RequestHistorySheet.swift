@@ -212,13 +212,8 @@ struct RequestHistorySheet: View {
 /// end shown as the last day it includes.
 enum HistoryRangeText {
     static func format(since: Int64, before: Int64) -> String {
-        let formatter = DateFormatter()
-        formatter.dateStyle = .medium
-        formatter.timeStyle = .none
-        let start = Date(timeIntervalSince1970: TimeInterval(since) / 1000)
-        let last = Date(timeIntervalSince1970: TimeInterval(before - 1) / 1000)
-        let a = formatter.string(from: start)
-        let b = formatter.string(from: last)
+        let a = DateStamp.day(Date(timeIntervalSince1970: TimeInterval(since) / 1000))
+        let b = DateStamp.day(Date(timeIntervalSince1970: TimeInterval(before - 1) / 1000))
         return a == b ? "on \(a)" : String(localized: "from \(a) through \(b)")
     }
 }

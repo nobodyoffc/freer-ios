@@ -347,8 +347,7 @@ struct CashView: View {
 
             VStack(alignment: .trailing, spacing: 2) {
                 if let ts = cash.birthTime, ts > 0 {
-                    Text(Date(timeIntervalSince1970: TimeInterval(ts))
-                        .formatted(date: .abbreviated, time: .shortened))
+                    DateStampText(seconds: ts, twoRows: true)
                         .font(.caption.monospacedDigit())
                         .foregroundStyle(.secondary)
                 }

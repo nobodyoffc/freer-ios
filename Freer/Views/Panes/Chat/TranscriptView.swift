@@ -265,7 +265,7 @@ struct TranscriptView: View {
                     .contextMenu { messageMenu(message, mine: mine) }
                 HStack(spacing: 4) {
                     if let time = message.timestamp {
-                        Text(ChatFormat.shortTime.string(from: Date(timeIntervalSince1970: Double(time) / 1000)))
+                        Text(DateStamp.full(millis: time))
                     }
                     if message.isEdited, let history = message.editHistory, !history.isEmpty {
                         Button("edited") { historyFor = message.id }
@@ -370,7 +370,7 @@ struct TranscriptView: View {
             who = String(localized: "\(names.cid(of: fid) ?? fid.elidingMiddle()) withdrew a message")
         }
         let when = message.timestamp.map {
-            " · " + ChatFormat.shortTime.string(from: Date(timeIntervalSince1970: Double($0) / 1000))
+            " · " + DateStamp.full(millis: $0)
         } ?? ""
         return Text(who + when)
             .font(.caption)
@@ -798,7 +798,7 @@ private struct EditHistoryView: View {
 
     private func version(_ label: String, at: Int64?, _ text: String?) -> some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(label + (at.map { " · " + ChatFormat.shortTime.string(from: Date(timeIntervalSince1970: Double($0) / 1000)) } ?? ""))
+            Text(label + (at.map { " · " + DateStamp.full(millis: $0) } ?? ""))
                 .font(.caption)
                 .foregroundStyle(.secondary)
             Text(text ?? "").textSelection(.enabled)
