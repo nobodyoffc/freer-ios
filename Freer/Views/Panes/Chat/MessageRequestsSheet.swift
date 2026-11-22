@@ -36,6 +36,7 @@ struct MessageRequestsSheet: View {
     @State private var error: String?
     /// On a phone: a sender has been tapped, and their messages fill the sheet.
     @State private var phoneReading = false
+    @State private var confirmAcceptAll = false
 
     private var compact: Bool { sizeClass == .compact }
 
@@ -64,7 +65,23 @@ struct MessageRequestsSheet: View {
         .bottomBar(back: readingOnPhone ? { phoneReading = false } : onClose) {
             if readingOnPhone, let selected {
                 requestActions(selected)
+            } else if requests.count > 1 {
+                // Words, not an icon: it lets in everyone on the list.
+                Button { confirmAcceptAll = true } label: {
+                    Text("Accept all").frame(minHeight: 30)
+                }
+                .help("Accept every sender on this list.")
             }
+        }
+        .confirmationDialog(
+            "Accept all \(String(requests.count)) senders?",
+            isPresented: $confirmAcceptAll,
+            titleVisibility: .visible
+        ) {
+            Button("Accept all") { acceptAll() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Each gets a conversation with what they have sent so far, and nothing they send later is held for you to review. Block anyone you don't want first.")
         }
         // Every request is from a FID, and deciding what to do about a
         // stranger is exactly when their record is worth reading.
@@ -290,6 +307,22 @@ struct MessageRequestsSheet: View {
             try session.contactPolicy.mutate(liveFid: session.liveFid) { $0.allow(fid) }
             finish()
         } catch {
+            self.error = String(describing: error)
+        }
+    }
+
+    /// Accept, for every sender listed. Stops at the first failure, with
+    /// the ones already accepted left accepted.
+    private func acceptAll() {
+        do {
+            for request in requests {
+                _ = try session.messageRequests.promote(request.fid, as: session.liveFid)
+                try session.contactPolicy.mutate(liveFid: session.liveFid) { $0.allow(request.fid) }
+            }
+            finish()
+        } catch {
+            // After the reload, which clears the error line.
+            finish()
             self.error = String(describing: error)
         }
     }

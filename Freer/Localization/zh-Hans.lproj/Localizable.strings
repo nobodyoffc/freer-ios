@@ -34,6 +34,31 @@
 "Emoji" = "表情";
 "Share a file" = "分享文件";
 
+"Todo" = "待办";
+"Invitations, requests and agreements waiting for your answer." = "等待你答复的邀请、请求和协议。";
+"Nothing to do" = "没有待办事项";
+"%@ — 1 message" = "%@——1 条消息";
+"%@ — %@ messages" = "%@——%@ 条消息";
+"A room" = "一个房间";
+"A team" = "一个团队";
+"%@ — invitation" = "%@——邀请";
+"%@ — being handed to you" = "%@——正在移交给你";
+"%@ changed its consensus" = "%@ 修改了共识";
+"%@ — members left; rotate the key" = "%@——有成员离开，请更换密钥";
+"%@ asks for a conversation's messages" = "%@ 请求一段对话的消息";
+"Message request" = "消息请求";
+"Room invitation" = "房间邀请";
+"Team invitation" = "团队邀请";
+"Team handover" = "团队移交";
+"Consensus change" = "共识变更";
+"Key rotation due" = "需要更换密钥";
+"History request" = "历史记录请求";
+"History not added" = "历史记录未添加";
+"Accept all" = "全部接受";
+"Accept every sender on this list." = "接受列表中的所有发送者。";
+"Accept all %@ senders?" = "接受全部 %@ 位发送者？";
+"Each gets a conversation with what they have sent so far, and nothing they send later is held for you to review. Block anyone you don't want first." = "每位发送者都会得到一个对话，包含其已发送的内容；之后他们发来的消息不再等待你审核。请先屏蔽你不想接收的人。";
+
 /* ---- from the Mac app's table ---- */
 
 /* Simplified Chinese.

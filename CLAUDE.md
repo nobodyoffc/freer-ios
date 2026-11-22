@@ -21,8 +21,10 @@ from the Mac's Swift code and laid out like the Android app.
   listed in `HomeTile.all`, in Android's order. It is also the overview: the
   Mac's Overview pane is not here (`WalletPane.overview` means the grid).
   Tiles carry Android's red counts (`HomeBadges`): unread chats and Cmail,
-  invitations awaiting an answer, and cashes the Cash pane has not shown
-  (`Freer/SeenCashes.swift`). An unpaid DOCK is a line above the grid.
+  invitations awaiting an answer, cashes the Cash pane has not shown
+  (`Freer/SeenCashes.swift`), and the Todo page's items. Todo
+  (`TodoView`, first tile, as on Android) lists every question the Chat
+  banners ask, each row going to the sheet or chat page that answers it. An unpaid DOCK is a line above the grid.
 - The gear on the home screen is a menu, as on Android: one row per
   `SettingsPage` (`SettingsView` shows one page at a time), Back up prikey,
   then First FCH and Logs, which have no tile.

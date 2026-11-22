@@ -527,6 +527,7 @@ struct HomeView: View {
         var now = HomeBadges()
         now.cash = SeenCashes.newCount(for: session)
         now.mail = (try? session.mails.unreadCount()) ?? 0
+        now.todo = TodoItem.count(in: session)
         for style in ChatModeStyle.all {
             now.unread[style.mode] = (try? session.conversations.unread(type: style.mode)) ?? 0
             // Invitations and agreements waiting on an answer are not
@@ -593,6 +594,8 @@ struct HomeView: View {
             TokensView(session: session)
         case .contacts:
             ContactsView(session: session)
+        case .todo:
+            TodoView(session: session)
         case .chat:
             ChatView(session: session)
         case .mail:
@@ -664,6 +667,8 @@ struct HomeBadges: Equatable {
     /// Cashes the Cash pane has not shown yet.
     var cash = 0
     var mail = 0
+    /// Everything on the Todo page.
+    var todo = 0
     var unread: [ImType: Int] = [:]
     /// Invitations and agreements that want an answer.
     var awaiting: [ImType: Int] = [:]
@@ -672,6 +677,7 @@ struct HomeBadges: Equatable {
         switch tile.target {
         case .pane(.cash): return cash
         case .pane(.mail): return mail
+        case .pane(.todo): return todo
         case .chat(let mode): return unread[mode, default: 0] + awaiting[mode, default: 0]
         case .pane, .pay, .receive: return 0
         }
@@ -703,7 +709,7 @@ struct CountBadge: View {
 ///
 /// **The order is Android's**, row for row, so someone who knows where
 /// Cmail is on their phone finds it in the same place here. Where Android
-/// has a tile this app has no screen for yet (TOTP, Todo, Carve), the
+/// has a tile this app has no screen for yet (TOTP, Carve), the
 /// slot goes to the nearest thing it does have; the tiles Android lacks
 /// follow at the end. Logs and First FCH are in the settings menu, where
 /// Android has them.
@@ -749,7 +755,7 @@ struct HomeTile: Identifiable {
     }
 
     static let all: [HomeTile] = [
-        pane(.news), pane(.convert, String(localized: "Convert")), pane(.crypto, String(localized: "Tools")),
+        pane(.todo), pane(.news), pane(.convert, String(localized: "Convert")), pane(.crypto, String(localized: "Tools")),
         pane(.protocols, String(localized: "Protocol")), pane(.services, String(localized: "Service")), pane(.codes),
         pane(.proofs, String(localized: "Proof")), pane(.tokens, String(localized: "Token")), pane(.apps, String(localized: "APP")),
         pane(.secrets, String(localized: "Secret")), pane(.files), pane(.transactions, String(localized: "TX")),

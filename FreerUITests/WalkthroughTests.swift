@@ -113,7 +113,7 @@ final class WalkthroughTests: XCTestCase {
         app.swipeDown()
 
         // Every tile, in grid order.
-        let tiles = ["News", "Convert", "Tools", "Protocol", "Service", "Code",
+        let tiles = ["Todo", "News", "Convert", "Tools", "Protocol", "Service", "Code",
                      "Proof", "Token", "APP", "Secret", "Files",
                      "TX", "Cash", "Receive", "Pay",
                      "Square", "Team", "Room", "Contact", "Cmail", "Talk",

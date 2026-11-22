@@ -24,6 +24,8 @@ enum WalletPane: String, Hashable, CaseIterable, Identifiable {
     case transactions
 
     // Society
+    /// Everything waiting for an answer — Android's Todo.
+    case todo
     case chat
     case contacts
     case mail
@@ -103,7 +105,7 @@ enum WalletPane: String, Hashable, CaseIterable, Identifiable {
         switch self {
         case .overview, .send, .cash, .transactions:
             return .wallet
-        case .contacts, .chat, .mail, .news, .helpBeginners:
+        case .todo, .contacts, .chat, .mail, .news, .helpBeginners:
             return .society
         case .files, .secrets:
             return .personal
@@ -132,6 +134,7 @@ enum WalletPane: String, Hashable, CaseIterable, Identifiable {
         case .cash:         return String(localized: "Cash")
         case .transactions: return String(localized: "Transactions")
         case .contacts:     return String(localized: "Contacts")
+        case .todo:         return String(localized: "Todo")
         case .chat:         return String(localized: "Chat")
         case .mail:         return String(localized: "Cmail")
         case .news:         return String(localized: "News")
@@ -208,7 +211,7 @@ enum WalletPane: String, Hashable, CaseIterable, Identifiable {
     /// really does close it: a main FID with no privkey.
     var needsKey: Bool {
         switch self {
-        case .chat, .mail, .secrets:
+        case .todo, .chat, .mail, .secrets:
             return true
         case .overview, .send, .cash, .transactions,
              .contacts, .news, .helpBeginners, .proofs, .tokens, .files,
@@ -223,7 +226,7 @@ enum WalletPane: String, Hashable, CaseIterable, Identifiable {
     /// open.
     var closedReason: String? {
         switch self {
-        case .chat, .mail:
+        case .todo, .chat, .mail:
             return String(localized: "Watch-only identity — no key to open a DOCK with, or to decrypt what it holds. Switch to your main FID.")
         case .secrets:
             return String(localized: "Watch-only identity — no key to decrypt these with. Switch to your main FID.")
@@ -239,6 +242,7 @@ enum WalletPane: String, Hashable, CaseIterable, Identifiable {
         case .cash:         return "banknote"
         case .transactions: return "list.bullet"
         case .contacts:     return "person.2"
+        case .todo:         return "checklist"
         case .chat:         return "bubble.left.and.bubble.right"
         case .mail:         return "envelope"
         case .news:         return "newspaper"
