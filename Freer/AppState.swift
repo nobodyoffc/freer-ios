@@ -205,10 +205,16 @@ final class AppState {
     /// used rather than re-running an old deep link.
     private(set) var pendingChatMode: ImType?
 
+    /// The flavour the Chat pane is on, which its title bar names. Unlike
+    /// ``pendingChatMode`` it is not consumed: it lasts while the pane is
+    /// open.
+    var chatMode: ImType = .p2p
+
     /// Open the Chat pane on `mode`. The two writes belong together —
     /// setting the tab without switching panes does nothing visible.
     func openChat(mode: ImType) {
         pendingChatMode = mode
+        chatMode = mode
         selectedPane = .chat
     }
 

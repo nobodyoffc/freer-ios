@@ -376,7 +376,13 @@ struct HomeView: View {
     /// A pane's name in its title bar. Settings is five pages behind one
     /// pane, and each is titled as the menu named it.
     private func title(of pane: WalletPane) -> String {
-        pane == .settings ? appState.settingsPage.title : pane.title
+        switch pane {
+        case .settings: return appState.settingsPage.title
+        // The tile's own name: the pane has no tabs, so this is what
+        // says which of the four is open.
+        case .chat: return HomeTile.chatTitle(appState.chatMode)
+        default: return pane.title
+        }
     }
 
     /// The person menu — who am I living as, and every identity role I
@@ -732,6 +738,14 @@ struct HomeTile: Identifiable {
 
     private static func pane(_ pane: WalletPane, _ title: String? = nil) -> HomeTile {
         HomeTile(title: title ?? pane.title, systemImage: pane.systemImage, target: .pane(pane))
+    }
+
+    /// The name of the tile that opens Chat on `mode`.
+    static func chatTitle(_ mode: ImType) -> String {
+        for tile in all {
+            if case .chat(mode) = tile.target { return tile.title }
+        }
+        return WalletPane.chat.title
     }
 
     static let all: [HomeTile] = [

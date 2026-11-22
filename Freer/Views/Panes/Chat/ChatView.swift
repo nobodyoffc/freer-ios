@@ -128,9 +128,6 @@ struct ChatView: View {
     /// Teams and squares carved for and not yet shown by the chain, per
     /// flavour — Android's pending rows.
     @State private var pending: [ImType: [PendingGroup]] = [:]
-    /// Invitations and agreements waiting on an answer, per flavour, for
-    /// the tab badges.
-    @State private var awaiting: [ImType: Int] = [:]
     /// Groups whose DOCK refused the last connection, per flavour.
     @State private var unreachable: [ImType: Set<String>] = [:]
     /// Choosing several threads to leave, close or disband together.
@@ -310,10 +307,6 @@ struct ChatView: View {
         }
     }
 
-    private func unread(_ type: ImType) -> Int {
-        (threads[type] ?? []).reduce(0) { $0 + ($1.unreadCount ?? 0) }
-    }
-
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
           if readingOnPhone {
@@ -323,7 +316,8 @@ struct ChatView: View {
           } else {
             PaneHeader(session: session)
             Divider()
-            modeTabs
+            // No tabs for the four flavours: as on Android, each has its
+            // own home tile, and the pane stays on the one it opened on.
             toolbar
 
             if mode == .p2p, !requests.isEmpty {
@@ -392,7 +386,7 @@ struct ChatView: View {
             // An Overview tile can ask for a specific flavour. Consume it
             // before the first reload so the pane never paints the wrong
             // tab first.
-            if let requested = appState.consumePendingChatMode() { mode = requested }
+            mode = appState.consumePendingChatMode() ?? appState.chatMode
             if appState.consumePendingNewChat() { showNewChat = true }
             if appState.consumePendingTeamOffers() { showTeamOffers = true }
             reload()
@@ -417,6 +411,8 @@ struct ChatView: View {
         // into a square, and the search box belongs to the list that was
         // being searched.
         .onChange(of: mode) { _, _ in
+            // The title bar names the flavour on screen.
+            appState.chatMode = mode
             phoneReading = false
             recorder.cancel()
             player.stop()
@@ -760,73 +756,11 @@ struct ChatView: View {
         }
     }
 
-    /// The four flavours, as tabs rather than as rows in one list.
-    private var modeTabs: some View {
-        FlowRow(spacing: 6) {
-            ForEach(ChatModeStyle.all) { candidate in
-                let count = unread(candidate.mode)
-                Button {
-                    mode = candidate.mode
-                } label: {
-                    HStack(spacing: 5) {
-                        Image(systemName: candidate.systemImage)
-                        Text(candidate.title)
-                        if count > 0 {
-                            Text("\(count)")
-                                .font(.caption2.bold())
-                                .padding(.horizontal, 5)
-                                .padding(.vertical, 1)
-                                .background(Capsule().fill(candidate.tint))
-                                .foregroundStyle(.white)
-                        }
-                        // Not unread messages: invitations and agreements
-                        // waiting on an answer, which otherwise show only
-                        // inside the tab they belong to.
-                        if let asks = awaiting[candidate.mode], asks > 0 {
-                            HStack(spacing: 2) {
-                                Image(systemName: "envelope.badge")
-                                Text("\(asks)")
-                            }
-                            .font(.caption2.bold())
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 1)
-                            .background(Capsule().fill(Color.orange))
-                            .foregroundStyle(.white)
-                            .help("\(asks) invitation\(asks == 1 ? "" : "s") or request\(asks == 1 ? "" : "s") waiting for your answer")
-                        }
-                    }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .background(
-                        RoundedRectangle(cornerRadius: 7)
-                            .fill(candidate.mode == mode
-                                  ? candidate.tint.opacity(0.18)
-                                  : Color(NSColor.controlBackgroundColor))
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 7)
-                            .stroke(candidate.mode == mode ? candidate.tint : .clear, lineWidth: 1)
-                    )
-                    .foregroundStyle(candidate.mode == mode ? AnyShapeStyle(candidate.tint) : AnyShapeStyle(.primary))
-                }
-                .buttonStyle(.plain)
-                .help(candidate.summary)
-            }
-            Spacer(minLength: 0)
-        }
-    }
-
+    /// The search alone: the title bar already names the flavour.
     private var toolbar: some View {
-        FlowRow(spacing: 12) {
-            Text(style.title)
-                .font(.headline)
-                .foregroundStyle(style.isPublic ? AnyShapeStyle(style.tint) : AnyShapeStyle(.primary))
-
-            Spacer()
-
-            SearchField(String(localized: "Search \(style.title.lowercased())…"), text: $search, minWidth: 140)
-                .help("Matches the name, the id, and the last message shown")
-        }
+        SearchField(String(localized: "Search \(style.title.lowercased())…"), text: $search, minWidth: 140)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .help("Matches the name, the id, and the last message shown")
     }
 
     /// The list's bottom bar: the tab's menu first, as Android has its ⋮,
@@ -1680,15 +1614,12 @@ struct ChatView: View {
                 squares: session.squares, conversations: session.conversations
             )
             var waitingOnChain: [ImType: [PendingGroup]] = [:]
-            var asks: [ImType: Int] = [:]
             for style in ChatModeStyle.all {
                 waitingOnChain[style.mode] = (try? session.pendingGroups.all(
                     fid: session.liveFid, type: style.mode
                 )) ?? []
-                asks[style.mode] = session.awaitingAnswer(type: style.mode)
             }
             pending = waitingOnChain
-            awaiting = asks
             refreshUnreachable()
             historyRequests = try session.historyShares.incoming()
             historyFailures = try session.historyShares.received().filter(\.waitsForRetry)
