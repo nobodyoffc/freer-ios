@@ -241,7 +241,7 @@ struct MailView: View {
         Button {
             compose = ComposeRequest(preset: nil)
         } label: {
-            Label("Write", systemImage: "square.and.pencil")
+            Label("Write", systemImage: "plus")
         }
         .disabled(!session.canSign)
         .help(session.canSign
