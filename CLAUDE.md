@@ -110,6 +110,8 @@ Taken out of order since that commit: the language setting (`be3995d`),
 Create new password's own screen (`f404e0e`), and replies and @mentions
 (`564b6d3`, made here first and carried to the Mac — the iOS side keeps its
 thumb-side search, unfocused, and reads a thread only once it is opened).
+Team and room announcements were also made here first and carried to the Mac
+(`AnnouncementSheets.swift`; the Mac's sheets have footers instead of bottom bars).
 Deliberately not taken: larger controls (`d9338b7`).
 
 ## Build and check

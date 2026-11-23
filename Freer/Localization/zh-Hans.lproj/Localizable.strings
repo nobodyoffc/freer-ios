@@ -60,6 +60,22 @@
 "Each gets a conversation with what they have sent so far, and nothing they send later is held for you to review. Block anyone you don't want first." = "每位发送者都会得到一个对话，包含其已发送的内容；之后他们发来的消息不再等待你审核。请先屏蔽你不想接收的人。";
 "Mentioned you" = "有人@我";
 "A group" = "一个群";
+"Announcement" = "公告";
+"Announcements…" = "群公告…";
+"New announcement" = "新公告";
+"New announcement…" = "发布公告…";
+"Announcement history" = "历史公告";
+"No announcements yet" = "还没有公告";
+"Post to everyone" = "发给所有成员";
+"Posting…" = "正在发布…";
+"Every member is asked to open it and confirm. Once they have, it leaves their list and stays in the announcement history." = "每位成员都需要打开并确认。确认后，公告不再提醒，但仍可在历史公告中查看。";
+"You have read it: it leaves your list and stays in the announcement history" = "已阅读：不再提醒，仍可在历史公告中查看";
+"An announcement waiting for you to read and confirm it" = "有一条公告等待你阅读并确认";
+"%@ of %@" = "第 %@ 条，共 %@ 条";
+"%@ — an announcement to confirm" = "%@——有一条公告待确认";
+"%@ — %@ announcements to confirm" = "%@——有 %@ 条公告待确认";
+"%@ — 1 announcement" = "%@——1 条公告";
+"%@ — %@ announcements" = "%@——%@ 条公告";
 
 /* ---- from the Mac app's table ---- */
 

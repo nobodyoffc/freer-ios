@@ -21,6 +21,7 @@ struct TodoView: View {
     @State private var showRequests = false
     @State private var showTeamOffers = false
     @State private var showConsensus = false
+    @State private var reading: [GroupAnnouncement]?
 
     private var names: ChatNameBook { appState.chatNames }
 
@@ -72,6 +73,18 @@ struct TodoView: View {
                 onClose: { showTeamOffers = false },
                 onChanged: reload
             )
+        }
+        .sheet(isPresented: Binding(get: { reading != nil }, set: { if !$0 { reading = nil } }),
+               onDismiss: reload) {
+            if let reading {
+                AnnouncementReadSheet(
+                    session: session,
+                    names: names,
+                    announcements: reading,
+                    onClose: { self.reading = nil },
+                    onChanged: reload
+                )
+            }
         }
         .sheet(isPresented: $showConsensus, onDismiss: reload) {
             ConsensusSignatureSheet(
@@ -134,6 +147,11 @@ struct TodoView: View {
             return String(localized: "\(who) asks for a conversation's messages")
         case .historyFailed:
             return String(localized: "History from \(who) could not be added")
+        case .announcement:
+            let group = item.name ?? String(localized: "A group")
+            return item.count == 1
+                ? String(localized: "\(group) — 1 announcement")
+                : String(localized: "\(group) — \(String(item.count)) announcements")
         case .mention:
             let group = item.name ?? String(localized: "A group")
             return item.count == 1
@@ -152,6 +170,8 @@ struct TodoView: View {
         case .historyRequest, .historyFailed: appState.openChat(mode: item.chatMode ?? .p2p)
         case .mention:
             if let conversation = item.conversation { appState.openChat(conversation: conversation) }
+        case .announcement:
+            reading = item.announcements
         }
     }
 
@@ -165,7 +185,7 @@ struct TodoItem: Identifiable {
     enum Kind {
         case messageRequest, roomInvite, teamInvite, teamTransfer
         case consensusChange, keyRotation, historyRequest, historyFailed
-        case mention
+        case mention, announcement
 
         var title: String {
             switch self {
@@ -178,6 +198,7 @@ struct TodoItem: Identifiable {
             case .historyRequest:  return String(localized: "History request")
             case .historyFailed:   return String(localized: "History not added")
             case .mention:         return String(localized: "Mentioned you")
+            case .announcement:    return String(localized: "Announcement")
             }
         }
 
@@ -191,6 +212,7 @@ struct TodoItem: Identifiable {
             case .historyRequest:  return "clock.arrow.circlepath"
             case .historyFailed:   return "exclamationmark.triangle"
             case .mention:         return "at"
+            case .announcement:    return "megaphone"
             }
         }
 
@@ -200,6 +222,7 @@ struct TodoItem: Identifiable {
             case .teamInvite, .teamTransfer: return ChatModeStyle.of(.team).tint
             case .historyRequest: return .accentColor
             case .mention: return .red
+            case .announcement: return .accentColor
             case .messageRequest, .consensusChange, .keyRotation, .historyFailed: return .orange
             }
         }
@@ -217,6 +240,8 @@ struct TodoItem: Identifiable {
     var chatMode: ImType?
     /// The thread it is answered in, for one that is.
     var conversation: Conversation?
+    /// The announcements it asks to be confirmed, oldest first.
+    var announcements: [GroupAnnouncement] = []
 
     /// Every open item, newest kinds of question first as Android lists
     /// them: people, then groups, then housekeeping.
@@ -230,6 +255,17 @@ struct TodoItem: Identifiable {
             items.append(TodoItem(id: "mention|" + mention.id, kind: .mention,
                                   name: mention.groupName, count: mention.count,
                                   chatMode: mention.conversation.type, conversation: mention.conversation))
+        }
+        // Announcements waiting to be read and confirmed, a row per group.
+        let waiting = Dictionary(grouping: session.unconfirmedAnnouncements(), by: \.conversation.id)
+            .values
+            .sorted { ($0.first?.message.timestamp ?? 0) < ($1.first?.message.timestamp ?? 0) }
+        for group in waiting {
+            let conversation = group[0].conversation
+            items.append(TodoItem(id: "announcement|" + conversation.id, kind: .announcement,
+                                  name: ChatFormat.title(of: conversation), detail: group[0].body,
+                                  count: group.count, chatMode: conversation.type,
+                                  conversation: conversation, announcements: group))
         }
         for request in (try? session.messageRequests.pending()) ?? [] {
             items.append(TodoItem(id: "request|" + request.fid, kind: .messageRequest,
