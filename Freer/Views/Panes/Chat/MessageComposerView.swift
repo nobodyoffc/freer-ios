@@ -45,9 +45,13 @@ struct MessageComposerView: View {
     /// A voice call (1:1) or the meeting choices (Room, Team), just left of
     /// the microphone; nil where neither applies.
     var call: ComposerCall? = nil
+    /// Changed by the pane to give the text field the keyboard back —
+    /// after the mention list, which took it, has closed.
+    var focusRequest: Int = 0
 
     @Environment(\.horizontalSizeClass) private var sizeClass
     @State private var showEmoji = false
+    @FocusState private var typing: Bool
 
     private var enabled: Bool { verdict.canSend }
 
@@ -145,6 +149,7 @@ struct MessageComposerView: View {
                 .lineLimit(1...5)
                 .fieldInputStyle()
                 .disabled(!enabled)
+                .focused($typing)
                 .onSubmit(onSend)
 
             Button(action: onSend) {
@@ -154,6 +159,14 @@ struct MessageComposerView: View {
             }
             .buttonStyle(.borderedProminent)
             .disabled(!enabled || draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        }
+        .onChange(of: focusRequest) { _, _ in
+            // Once the sheet has finished going away: focus asked for
+            // while it is still on screen is lost with it.
+            Task {
+                try? await Task.sleep(for: .milliseconds(350))
+                typing = true
+            }
         }
         .popover(isPresented: $showEmoji, arrowEdge: .bottom) {
             EmojiPicker { emoji in

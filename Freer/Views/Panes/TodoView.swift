@@ -134,6 +134,11 @@ struct TodoView: View {
             return String(localized: "\(who) asks for a conversation's messages")
         case .historyFailed:
             return String(localized: "History from \(who) could not be added")
+        case .mention:
+            let group = item.name ?? String(localized: "A group")
+            return item.count == 1
+                ? String(localized: "\(group) — 1 message")
+                : String(localized: "\(group) — \(String(item.count)) messages")
         }
     }
 
@@ -145,11 +150,13 @@ struct TodoView: View {
         case .roomInvite: appState.openChat(mode: .room)
         case .keyRotation: appState.openChat(mode: .team)
         case .historyRequest, .historyFailed: appState.openChat(mode: item.chatMode ?? .p2p)
+        case .mention:
+            if let conversation = item.conversation { appState.openChat(conversation: conversation) }
         }
     }
 
     private func reload() {
-        items = TodoItem.all(in: session)
+        items = TodoItem.all(in: session, myCid: names.cid(of: session.liveFid))
     }
 }
 
@@ -158,6 +165,7 @@ struct TodoItem: Identifiable {
     enum Kind {
         case messageRequest, roomInvite, teamInvite, teamTransfer
         case consensusChange, keyRotation, historyRequest, historyFailed
+        case mention
 
         var title: String {
             switch self {
@@ -169,6 +177,7 @@ struct TodoItem: Identifiable {
             case .keyRotation:     return String(localized: "Key rotation due")
             case .historyRequest:  return String(localized: "History request")
             case .historyFailed:   return String(localized: "History not added")
+            case .mention:         return String(localized: "Mentioned you")
             }
         }
 
@@ -181,6 +190,7 @@ struct TodoItem: Identifiable {
             case .keyRotation:     return "key.horizontal"
             case .historyRequest:  return "clock.arrow.circlepath"
             case .historyFailed:   return "exclamationmark.triangle"
+            case .mention:         return "at"
             }
         }
 
@@ -189,6 +199,7 @@ struct TodoItem: Identifiable {
             case .roomInvite: return ChatModeStyle.of(.room).tint
             case .teamInvite, .teamTransfer: return ChatModeStyle.of(.team).tint
             case .historyRequest: return .accentColor
+            case .mention: return .red
             case .messageRequest, .consensusChange, .keyRotation, .historyFailed: return .orange
             }
         }
@@ -204,11 +215,22 @@ struct TodoItem: Identifiable {
     var count = 0
     /// The chat page whose banner answers it.
     var chatMode: ImType?
+    /// The thread it is answered in, for one that is.
+    var conversation: Conversation?
 
     /// Every open item, newest kinds of question first as Android lists
     /// them: people, then groups, then housekeeping.
-    static func all(in session: ActiveSession) -> [TodoItem] {
+    /// `myCid` is how a group's `@` names the live identity besides its FID.
+    @MainActor
+    static func all(in session: ActiveSession, myCid: String?) -> [TodoItem] {
         var items: [TodoItem] = []
+        // Somebody waiting for an answer from you in a group: first, as
+        // the most direct question there is.
+        for mention in session.unreadMentions(myCid: myCid) {
+            items.append(TodoItem(id: "mention|" + mention.id, kind: .mention,
+                                  name: mention.groupName, count: mention.count,
+                                  chatMode: mention.conversation.type, conversation: mention.conversation))
+        }
         for request in (try? session.messageRequests.pending()) ?? [] {
             items.append(TodoItem(id: "request|" + request.fid, kind: .messageRequest,
                                   fid: request.fid, detail: request.lastPreview, count: request.count))
@@ -243,7 +265,8 @@ struct TodoItem: Identifiable {
     }
 
     /// The Todo tile's count.
-    static func count(in session: ActiveSession) -> Int {
-        all(in: session).count
+    @MainActor
+    static func count(in session: ActiveSession, myCid: String?) -> Int {
+        all(in: session, myCid: myCid).count
     }
 }

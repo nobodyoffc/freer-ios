@@ -527,7 +527,9 @@ struct HomeView: View {
         var now = HomeBadges()
         now.cash = SeenCashes.newCount(for: session)
         now.mail = (try? session.mails.unreadCount()) ?? 0
-        now.todo = TodoItem.count(in: session)
+        // Our CID, so a group's `@` of it counts here before Chat is opened.
+        appState.chatNames.resolve([session.liveFid], session: session)
+        now.todo = TodoItem.count(in: session, myCid: appState.chatNames.cid(of: session.liveFid))
         for style in ChatModeStyle.all {
             now.unread[style.mode] = (try? session.conversations.unread(type: style.mode)) ?? 0
             // Invitations and agreements waiting on an answer are not
